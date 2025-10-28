@@ -42,6 +42,13 @@ dependencies:
   visibility_detector: ^0.4.0+2
   flutter_animate_on_scroll: ^0.3.0
   flutter_scroll_animation: ^0.0.1
+  responsive_framework: ^1.5.1
+  flutter_screenutil: ^5.9.3
+  http: ^1.5.0
+  awesome_snackbar_content: ^0.1.7
+  web: ^1.1.1
+  flutter_secure_storage: ^9.2.4
+  flutter_web_auth: ^0.6.0
 
 dev_dependencies:
   flutter_test:
@@ -76,6 +83,15 @@ flutter:
     - assets/image/dart.png
     - assets/image/secure.png
     - assets/image/message.png
+    - assets/image/responsivelaptop.png
+    - assets/image/couple1.jpg
+    - assets/image/coupl2.jpg
+    - assets/image/couple3.jpg
+    - assets/image/gmaps.png
+    - assets/image/googleicon.png
+    - assets/image/facebookicon.png
+    - assets/image/fly.png
+    - assets/image/sweet.jpg
     
 
   # An image asset can refer to one or more resolution-specific "variants", see
