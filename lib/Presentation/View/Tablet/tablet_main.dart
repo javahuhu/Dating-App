@@ -2,6 +2,7 @@ import 'package:dating_app/Presentation/Animation/animation_carousel.dart';
 import 'package:dating_app/Presentation/View/Desktop/snake_border.dart';
 import 'package:flutter/material.dart';
 import 'package:glassmorphism/glassmorphism.dart';
+import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:dating_app/Core/Theme/colors.dart';
 import 'package:flutter_animate_on_scroll/flutter_animate_on_scroll.dart';
@@ -77,7 +78,9 @@ class TabletMainScreen extends HookConsumerWidget {
                     Row(
                       children: [
                         ElevatedButton(
-                          onPressed: () {},
+                          onPressed: () {
+                            context.go('/login');
+                          },
                           style: ElevatedButton.styleFrom(
                             side: BorderSide(
                               color: charcoal.withValues(alpha: 0.80),

@@ -4,14 +4,18 @@ import 'dart:io';
 import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 import 'package:dating_app/Application/UseCases/login_usecases.dart';
 import 'package:dating_app/Application/UseCases/user_register_usecases.dart';
+import 'package:dating_app/Core/Auth/auth_storage.dart';
 import 'package:dating_app/Core/Theme/colors.dart';
 import 'package:dating_app/Data/API/login_api.dart';
+import 'package:dating_app/Data/API/profile_api.dart';
 import 'package:dating_app/Data/API/register_api.dart';
 import 'package:dating_app/Data/API/social_api.dart';
+import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:dating_app/Data/Repositories/Implementation/login_implementation.dart';
 import 'package:dating_app/Data/Repositories/Implementation/register_implementation.dart';
 import 'package:dating_app/Domain/Enteties/user_entities.dart';
 import 'package:dating_app/Domain/Enteties/user_register_entities.dart';
+import 'package:dating_app/Presentation/Provider/login_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:go_router/go_router.dart';
@@ -137,34 +141,34 @@ class LoginScreenMobile extends HookConsumerWidget {
                     image: 'assets/image/googleicon.png',
                     label: 'Google',
                     onTap: () async {
-                    final social = SocialAuth();
-                    try {
-                      final token = await social.signInWithProvider('google');
+                      final social = SocialAuth();
+                      try {
+                        final token = await social.signInWithProvider('google');
 
-                      if (token != null) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Signed in with Google')),
-                          );
-                          context.go('/setup');
+                        if (token != null) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Signed in with Google')),
+                            );
+                            context.go('/setup');
+                          }
+                        } else {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Opening Google sign-in...'),
+                              ),
+                            );
+                          }
                         }
-                      } else {
+                      } catch (e) {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Opening Google sign-in...'),
-                            ),
+                            SnackBar(content: Text('Sign-in error: $e')),
                           );
                         }
                       }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Sign-in error: $e')),
-                        );
-                      }
-                    }
-                  },
+                    },
                     bgColor: Colors.white,
                     textColor: charcoal,
                     borderColor: kBodyTextColor.withValues(alpha: 0.15),
@@ -188,7 +192,7 @@ class LoginScreenMobile extends HookConsumerWidget {
   }
 }
 
-class _AuthCardMobile extends StatefulWidget {
+class _AuthCardMobile extends ConsumerStatefulWidget {
   final String title;
   final String subtitle;
   final String buttonText;
@@ -209,30 +213,37 @@ class _AuthCardMobile extends StatefulWidget {
   });
 
   @override
-  State<_AuthCardMobile> createState() => _AuthCardMobileState();
+  ConsumerState<_AuthCardMobile> createState() => _AuthCardMobileState();
 }
 
-class _AuthCardMobileState extends State<_AuthCardMobile> {
+class _AuthCardMobileState extends ConsumerState<_AuthCardMobile> {
   final _formKey = GlobalKey<FormState>();
-  final emailController = TextEditingController();
-  final passwordController = TextEditingController();
-  final nameController = TextEditingController();
-  final confirmpasswordController = TextEditingController();
+
+  // Now use provider-backed controllers (do not create new instances here)
+  late final TextEditingController emailController;
+  late final TextEditingController passwordController;
+  late final TextEditingController nameController;
+  late final TextEditingController confirmpasswordController;
 
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
-  
   bool isLoading = false;
 
-
+  @override
+  void initState() {
+    super.initState();
+    // Obtain controller instances from Riverpod providers.
+    // Using ref.read in initState returns the same instance for the scope.
+    emailController = ref.read(emailControllerProvider);
+    passwordController = ref.read(passwordControllerProvider);
+    nameController = ref.read(nameControllerProvider);
+    confirmpasswordController = ref.read(confirmPasswordControllerProvider);
+  }
 
   @override
   void dispose() {
-    emailController.dispose();
-    passwordController.dispose();
-    nameController.dispose();
-    confirmpasswordController.dispose();
+    // IMPORTANT: don't dispose controllers here — providers handle disposal (autoDispose).
     super.dispose();
   }
 
@@ -350,7 +361,6 @@ class _AuthCardMobileState extends State<_AuthCardMobile> {
 
     try {
       if (isSignUp) {
-        
         final entity = UserRegisterEntities(
           username: nameController.text.trim(),
           email: emailController.text.trim(),
@@ -391,7 +401,6 @@ class _AuthCardMobileState extends State<_AuthCardMobile> {
           );
         }
       } else {
-        
         final loginModel = UserLoginEntities(
           email: emailController.text.trim(),
           password: passwordController.text,
@@ -407,19 +416,70 @@ class _AuthCardMobileState extends State<_AuthCardMobile> {
         setState(() => isLoading = false);
 
         if (loginResult['success'] == true) {
+          if (context.mounted) {
+            _showAwesomeSnackBar(
+              ctx: context,
+              title: 'Welcome!',
+              message: loginResult['message']?.toString() ?? 'Login successful',
+              contentType: ContentType.success,
+              duration: const Duration(seconds: 2),
+            );
+          }
 
-          if (!mounted) return;
-          _showAwesomeSnackBar(
-            ctx: context,
-            title: 'Welcome!',
-            message: loginResult['message']?.toString() ?? 'Login successful',
-            contentType: ContentType.success,
-            duration: const Duration(seconds: 2),
-          );
+          // optional: persist token if backend returned one
+          final token = loginResult['token'] as String?;
+          if (token != null && token.isNotEmpty) {
+            try {
+              await saveToken(
+                token,
+              ); // remove or replace if your helper name differs
+            } catch (e) {
+              debugPrint('saveToken failed: $e');
+            }
+          }
 
-          if (!mounted) return;
+          // Show success snackbar (you already do this above — keep if duplicated)
+          // _showAwesomeSnackBar(...)
 
-          context.go('/');
+          try {
+            final api = ProfileApi();
+            UserinformationModel? existingProfile;
+
+            // Prefer using the token returned from login; fallback to readToken() if necessary
+            final effectiveToken = token ?? await readToken();
+
+            if (effectiveToken != null && effectiveToken.isNotEmpty) {
+              existingProfile = await api.fetchProfile(effectiveToken);
+            } else {
+              existingProfile = null;
+            }
+
+            final hasProfile =
+                existingProfile != null &&
+                (existingProfile.name.trim().isNotEmpty == true) &&
+                (existingProfile.age > 0) &&
+                (existingProfile.bio.trim().isNotEmpty == true) &&
+                (existingProfile.profilePicture?.trim().isNotEmpty == true);
+
+            if (!mounted) return;
+
+            if (hasProfile) {
+              // user already has a complete profile -> go home
+              if (context.mounted) {
+                context.go('/homepage');
+              }
+            } else {
+              // no/partial profile -> go to setup
+              if (context.mounted) {
+                context.go('/setup');
+              }
+            }
+          } catch (e, st) {
+            debugPrint('fetchProfile after login failed: $e\n$st');
+            // fallback: go to setup if profile check fails
+            if (context.mounted) return;
+            context.go('/setup');
+          }
         } else {
           _showAwesomeSnackBar(
             ctx: context,

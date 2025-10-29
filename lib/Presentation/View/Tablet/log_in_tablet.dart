@@ -3,32 +3,29 @@ import 'dart:io';
 import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 import 'package:dating_app/Application/UseCases/login_usecases.dart';
 import 'package:dating_app/Application/UseCases/user_register_usecases.dart';
+import 'package:dating_app/Core/Auth/auth_storage.dart';
 import 'package:dating_app/Core/Theme/colors.dart';
 import 'package:dating_app/Data/API/login_api.dart';
+import 'package:dating_app/Data/API/profile_api.dart';
 import 'package:dating_app/Data/API/register_api.dart';
 import 'package:dating_app/Data/API/social_api.dart';
+import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:dating_app/Data/Repositories/Implementation/login_implementation.dart';
 import 'package:dating_app/Data/Repositories/Implementation/register_implementation.dart';
 import 'package:dating_app/Domain/Enteties/user_entities.dart';
 import 'package:dating_app/Domain/Enteties/user_register_entities.dart';
-import 'package:dating_app/Presentation/View/Desktop/log_in_desktop.dart';
+import 'package:dating_app/Presentation/Provider/login_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:hooks_riverpod/legacy.dart';
+
 
 class LoginScreenTablet extends HookConsumerWidget {
-  LoginScreenTablet({super.key});
+ const LoginScreenTablet({super.key});
 
   double _clampScale(double value, double min, double max) {
     return value.clamp(min, max);
   }
-
-  final isSignUpProvider = StateProvider<bool>((ref) => false);
-  final obscurePasswordProvider = StateProvider.autoDispose<bool>(
-    (ref) => true,
-  );
-  final obscureConfirmProvider = StateProvider.autoDispose<bool>((ref) => true);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -377,6 +374,7 @@ class _AuthCardTablet extends ConsumerStatefulWidget {
 }
 
 class _AuthCardTabletState extends ConsumerState<_AuthCardTablet> {
+  // Use the global providers instead of creating local controllers
   late final TextEditingController emailController;
   late final TextEditingController passwordController;
   late final TextEditingController nameController;
@@ -388,18 +386,19 @@ class _AuthCardTabletState extends ConsumerState<_AuthCardTablet> {
   @override
   void initState() {
     super.initState();
-    emailController = TextEditingController();
-    passwordController = TextEditingController();
-    nameController = TextEditingController();
-    confirmpasswordController = TextEditingController();
+
+    // Obtain controllers from the Providers defined on the parent LoginScreenTablet class.
+    // ref is available because this is ConsumerState.
+    emailController = ref.read(emailControllerProvider);
+    passwordController = ref.read(passwordControllerProvider);
+    nameController = ref.read(nameControllerProvider);
+    confirmpasswordController = ref.read(confirmPasswordControllerProvider);
   }
 
   @override
   void dispose() {
-    emailController.dispose();
-    passwordController.dispose();
-    nameController.dispose();
-    confirmpasswordController.dispose();
+    // IMPORTANT: Do NOT dispose controllers here because providers manage disposal (autoDispose).
+    // Only call super.dispose() so widget lifecycle continues normally.
     super.dispose();
   }
 
@@ -610,7 +609,6 @@ class _AuthCardTabletState extends ConsumerState<_AuthCardTablet> {
 
         final loginResult = await useCase.execute(loginModel);
 
-
         if (!mounted) return;
         setState(() => isLoading = false);
 
@@ -632,10 +630,75 @@ class _AuthCardTabletState extends ConsumerState<_AuthCardTablet> {
             );
           }
 
-          if (context.mounted) {
-            context.go(
-              '/',
-            ); // change route as desired, e.g. '/home' or '/dashboard'
+          if (loginResult['success'] == true) {
+            // persist token if backend returned one
+            final token = loginResult['token'] as String?;
+            if (token != null && token.isNotEmpty) {
+              try {
+                await saveToken(token);
+              } catch (e) {
+                debugPrint('saveToken failed: $e');
+              }
+            } else {
+              debugPrint('Login succeeded but no token was returned');
+            }
+
+            // show success snackbar (your existing code)
+            if (context.mounted) {
+              showTopSnackBar(
+                Overlay.of(context),
+                Material(
+                  color: Colors.transparent,
+                  child: AwesomeSnackbarContent(
+                    title: 'Welcome!',
+                    message:
+                        loginResult['message']?.toString() ??
+                        'Login successful',
+                    contentType: ContentType.success,
+                  ),
+                ),
+                animationDuration: const Duration(milliseconds: 500),
+                displayDuration: const Duration(seconds: 2),
+              );
+            }
+
+            // --- NEW: check if profile already exists, then route accordingly ---
+            try {
+              final api = ProfileApi();
+              UserinformationModel? existingProfile;
+
+              // Only call fetchProfile if token exists
+              if (token != null && token.isNotEmpty) {
+                existingProfile = await api.fetchProfile(token);
+              }
+
+              final hasProfile =
+                  existingProfile != null &&
+                  (existingProfile.name.trim().isNotEmpty == true) &&
+                  (existingProfile.age > 0) &&
+                  (existingProfile.bio.trim().isNotEmpty == true) &&
+                  (existingProfile.profilePicture?.trim().isNotEmpty == true);
+
+              if (!mounted) return;
+
+              if (hasProfile) {
+                // user already has a complete profile -> go home
+                if (context.mounted) {
+                  context.go('/homepage');
+                }
+              } else {
+                // no/partial profile -> go to setup
+                if (context.mounted) {
+                  context.go('/setup');
+                }
+              }
+            } catch (e, st) {
+              debugPrint('fetchProfile after login failed: $e\n$st');
+              // If profile check fails for any reason, fall back to setup page:
+              if (context.mounted) {
+                context.go('/setup');
+              }
+            }
           }
         } else {
           if (context.mounted) {

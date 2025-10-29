@@ -1,15 +1,15 @@
-import 'dart:io';
 import 'package:dating_app/Core/Auth/auth_storage.dart';
 import 'package:dating_app/Data/API/profile_api.dart';
-import 'package:dating_app/Presentation/Provider/profile_provider.dart';
 import 'package:dating_app/Data/Models/userinformation_model.dart';
+import 'package:dating_app/Presentation/Provider/profile_provider.dart';
+import 'package:dating_app/Presentation/View/Desktop/completeprofile_dekstop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// Import global providers
+import 'package:path_provider/path_provider.dart';
 
 const Color kTitleColor = Color(0xFF2D2D2D);
 const Color kBodyTextColor = Color(0xFF4F4F4F);
@@ -20,18 +20,16 @@ const Color kBackgroundColor = Color(0xFFFAF6F9);
 const Color subtextViolet = Color(0xFF4B3B9A);
 const Color headingViolet = Color(0xFF3D2C8D);
 
-// REMOVED: Local provider definitions - now using global ones from profile_providers.dart
-
-class ProfileSetupPageDesktop extends HookConsumerWidget {
-  const ProfileSetupPageDesktop({super.key});
+class ProfileSetupTablet extends HookConsumerWidget {
+  const ProfileSetupTablet({super.key});
 
   double clampScale(double width, double base, double min, double max) {
-    final factor = (width / 2560).clamp(0.5, 1.2);
+    final factor = (width / 1100).clamp(0.75, 1.15); // Tablet target width 1100
     final scaled = base * factor;
     return scaled.clamp(min, max);
   }
 
-  /// simplified file picker
+  /// simplified file picker - same as desktop
   Future<void> pickFile(WidgetRef ref, BuildContext context) async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -142,6 +140,7 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
 
       // platformFile may be PlatformFile or a wrapper; extract safely
       PlatformFile? platformFile;
+
       if (filePlatform is PlatformFile) {
         platformFile = filePlatform;
       } else if (filePlatform != null && filePlatform is ValueNotifier) {
@@ -185,6 +184,7 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
           imageFile: imageFile,
         );
       }
+
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -200,6 +200,17 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
 
       if (!context.mounted) return;
       context.go('/homepage');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('✨ Profile created successfully!'),
+          backgroundColor: kPrimaryColor,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
 
       if (!context.mounted) return;
       Navigator.of(context).pushReplacement(
@@ -239,11 +250,10 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
       backgroundColor: kBackgroundColor,
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 2560),
+          constraints: const BoxConstraints(maxWidth: 1200),
           child: LayoutBuilder(
             builder: (context, constraints) {
               final width = constraints.maxWidth;
-              final isMobile = width < 900;
               double cs(double base, double min, double max) =>
                   clampScale(width, base, min, max);
 
@@ -567,10 +577,6 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
                   ),
                 ),
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(25),
-                    bottomLeft: Radius.circular(25),
-                  ),
                   child: SizedBox.expand(
                     child: Image.asset(
                       'assets/image/sweet.jpg',
@@ -580,63 +586,22 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
                 ),
               );
 
-              // Layout
-              if (isMobile) {
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      SizedBox(height: 300, child: buildImagePlaceholder()),
-                      buildFormSection(),
-                    ],
-                  ),
-                );
-              } else {
-                return Row(
+              // Tablet Layout - Image at the top, form below
+              return SingleChildScrollView(
+                child: Column(
                   children: [
-                    Expanded(
-                      flex: 35,
-                      child: SingleChildScrollView(child: buildFormSection()),
+                    // Image at the top
+                    SizedBox(
+                      height: cs(300, 250, 350),
+                      child: buildImagePlaceholder(),
                     ),
-                    Expanded(flex: 65, child: buildImagePlaceholder()),
+                    // Form section below
+                    buildFormSection(),
                   ],
-                );
-              }
+                ),
+              );
             },
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Minimal result screen to show the uploaded user profile (replace with your real home screen)
-class ProfileResultScreen extends StatelessWidget {
-  final UserinformationModel user;
-  const ProfileResultScreen({super.key, required this.user});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Profile Created')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            if (user.profilePicture == null && user.profilePicture!.isNotEmpty)
-              ClipOval(
-                child: Image.network(
-                  user.profilePicture!,
-                  width: 120,
-                  height: 120,
-                  fit: BoxFit.cover,
-                ),
-              ),
-            const SizedBox(height: 12),
-            Text('Name: ${user.name}', style: const TextStyle(fontSize: 18)),
-            Text('Age: ${user.age}', style: const TextStyle(fontSize: 16)),
-            const SizedBox(height: 8),
-            Text('Bio: ${user.bio}'),
-          ],
         ),
       ),
     );

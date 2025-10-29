@@ -1,6 +1,6 @@
+// lib/data/api/login_api.dart
 import 'dart:convert';
 import 'dart:io';
-
 import 'package:dating_app/Data/Models/user_login_model.dart';
 import 'package:http/http.dart' as http;
 
@@ -17,15 +17,17 @@ class LoginApi {
         body: jsonEncode(user.toJson()),
       );
 
+      final data = jsonDecode(response.body);
+
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        
         return {
           'success': true,
           'message': data['message'] ?? 'Login successful',
+          'token': data['token'], // <-- important
           'user': data['user'],
         };
       } else {
-        final data = jsonDecode(response.body);
         return {
           'success': false,
           'message': data['message'] ?? 'Login failed',

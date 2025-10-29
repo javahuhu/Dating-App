@@ -1,40 +1,55 @@
-// lib/Data/SocialAuth.dart
 import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
-
 import 'dart:html' as html;
+import 'package:logging/logging.dart';
 
 class SocialAuth {
   final String serverBase = 'http://localhost:3000/api/auth';
   final _secureStorage = const FlutterSecureStorage();
 
-  
-  Future<String?> signInWithProvider(String provider, {Duration timeout = const Duration(minutes: 2)}) async {
+  /// Central logger instance
+  static final _log = Logger('SocialAuth');
+
+  SocialAuth() {
+    // Configure root logging once — outputs to console
+    Logger.root.level = Level.ALL;
+    Logger.root.onRecord.listen((record) {
+      // Example format: [INFO] 2025-10-29 17:30:00.000 SocialAuth: message
+      // ignore: avoid_print
+      print(
+          '[${record.level.name}] ${record.time.toIso8601String()} ${record.loggerName}: ${record.message}');
+    });
+  }
+
+  Future<String?> signInWithProvider(
+    String provider, {
+    Duration timeout = const Duration(minutes: 2),
+  }) async {
     final authUrl = '$serverBase/$provider${kIsWeb ? '?web=1' : ''}';
+    _log.info('Starting OAuth flow for provider=$provider (web=$kIsWeb)');
 
     if (kIsWeb) {
-    
       final width = 600;
       final height = 700;
-      
       final screenWidth = html.window.screen?.width ?? 1024;
       final screenHeight = html.window.screen?.height ?? 768;
       final left = ((screenWidth - width) / 2).round();
       final top = ((screenHeight - height) / 2).round();
-      final features = 'popup=yes,width=$width,height=$height,left=$left,top=$top,scrollbars=yes';
+      final features =
+          'popup=yes,width=$width,height=$height,left=$left,top=$top,scrollbars=yes';
 
       html.WindowBase? popup;
       try {
         popup = html.window.open(authUrl, 'oauth_popup', features);
-      } catch (_) {
+        _log.info('Popup window opened successfully.');
+      } catch (e) {
+        _log.warning('Failed to open popup: $e');
         popup = null;
       }
 
-    
       if (popup == null) {
-      
+        _log.warning('Popup is null — redirecting full page to $authUrl');
         html.window.location.href = authUrl;
         return null;
       }
@@ -44,39 +59,36 @@ class SocialAuth {
       Timer? timeoutTimer;
       Timer? pollTimer;
 
-  
       void messageHandler(html.MessageEvent event) {
         try {
-          final origin = event.origin ?? '';
+          final origin = event.origin;
           final frontendOrigin = _getFrontendOrigin();
           final serverOrigin = _getServerOrigin();
 
-          // debug
-          print('main-window: message received, origin=$origin, expected(frontend)=$frontendOrigin, expected(server)=$serverOrigin, data=${event.data}');
-
-        
-          final acceptFromFrontend = frontendOrigin.isNotEmpty && origin == frontendOrigin;
-          final acceptFromServer = serverOrigin.isNotEmpty && origin == serverOrigin;
-          final permissive = frontendOrigin.isEmpty && serverOrigin.isEmpty;
+          final acceptFromFrontend =
+              frontendOrigin.isNotEmpty && origin == frontendOrigin;
+          final acceptFromServer =
+              serverOrigin.isNotEmpty && origin == serverOrigin;
+          final permissive =
+              frontendOrigin.isEmpty && serverOrigin.isEmpty;
 
           if (!(acceptFromFrontend || acceptFromServer || permissive)) {
-            print('main-window: origin not allowed -> ignoring');
+            _log.fine('Message ignored from untrusted origin: $origin');
             return;
           }
 
           final data = event.data;
           if (data is Map && data['type'] == 'oauth' && data['token'] is String) {
             final token = data['token'] as String;
-            // remove fallback token if present
-            try {
-              html.window.localStorage.remove('oauth_token');
-            } catch (_) {}
+            html.window.localStorage.remove('oauth_token');
             if (!completer.isCompleted) completer.complete(token);
-          } else if (data is String) {
-            if (!completer.isCompleted && data.isNotEmpty) completer.complete(data);
+            _log.info('Received token via message event');
+          } else if (data is String && data.isNotEmpty) {
+            if (!completer.isCompleted) completer.complete(data);
+            _log.info('Received raw token string via message event');
           }
         } catch (e) {
-          print('main-window: message handler error: $e');
+          _log.severe('Message handler error: $e');
         }
       }
 
@@ -85,19 +97,23 @@ class SocialAuth {
 
       // timeout
       timeoutTimer = Timer(timeout, () {
-        if (!completer.isCompleted) completer.complete(null);
+        if (!completer.isCompleted) {
+          _log.warning('OAuth flow timed out.');
+          completer.complete(null);
+        }
       });
 
-      // poll for popup closed
+      // poll popup
       pollTimer = Timer.periodic(const Duration(milliseconds: 300), (t) {
         try {
           if (popup == null || (popup.closed ?? true)) {
             t.cancel();
-            if (!completer.isCompleted) completer.complete(null);
+            if (!completer.isCompleted) {
+              _log.info('Popup closed before completion.');
+              completer.complete(null);
+            }
           }
-        } catch (_) {
-          // ignore cross-origin access exceptions
-        }
+        } catch (_) {}
       });
 
       final token = await completer.future;
@@ -106,89 +122,92 @@ class SocialAuth {
       try {
         await sub.cancel();
       } catch (_) {}
-      timeoutTimer?.cancel();
-      pollTimer?.cancel();
+      timeoutTimer.cancel();
+      pollTimer.cancel();
 
-      print('main-window: signInWithProvider completer returned token=$token');
+      _log.info('OAuth flow completed. Token: ${token ?? "null"}');
 
       if (token != null && token.isNotEmpty) {
-        // store token
         await saveToken(token);
         return token;
       }
 
-      // FALLBACK: check localStorage 'oauth_token' (set by popup as fallback)
+      // fallback to localStorage
       try {
         final fallback = html.window.localStorage['oauth_token'];
-        print('main-window: fallback oauth_token from localStorage = $fallback');
         if (fallback != null && fallback.isNotEmpty) {
-          // remove it immediately to avoid reuse
-          try {
-            html.window.localStorage.remove('oauth_token');
-          } catch (_) {}
+          html.window.localStorage.remove('oauth_token');
           await saveToken(fallback);
+          _log.info('Using fallback token from localStorage.');
           return fallback;
         }
       } catch (e) {
-        print('main-window: localStorage fallback error: $e');
+        _log.warning('LocalStorage fallback error: $e');
       }
 
-      // nothing found
+      _log.warning('No token obtained after OAuth flow.');
       return null;
     } else {
-      // Non-web (mobile/desktop) flow — use flutter_web_auth or similar
       return await _mobileSignIn(authUrl);
     }
   }
 
-  // Helper: store token (web -> localStorage; mobile -> secure storage)
   Future<void> saveToken(String token) async {
     if (kIsWeb) {
       try {
         html.window.localStorage['jwt'] = token;
-        print('main-window: saved jwt to localStorage');
+        _log.info('Saved JWT token to localStorage.');
       } catch (e) {
-        print('main-window: saveToken localStorage error: $e');
+        _log.warning('Failed to save JWT to localStorage: $e');
       }
     } else {
       await _secureStorage.write(key: 'jwt', value: token);
+      _log.info('Saved JWT token securely on device.');
     }
   }
 
   Future<String?> readToken() async {
     if (kIsWeb) {
       try {
-        return html.window.localStorage['jwt'];
-      } catch (_) {
+        final token = html.window.localStorage['jwt'];
+        _log.fine('Read JWT from localStorage: ${token ?? "null"}');
+        return token;
+      } catch (e) {
+        _log.warning('Error reading JWT from localStorage: $e');
         return null;
       }
     } else {
-      return await _secureStorage.read(key: 'jwt');
+      final token = await _secureStorage.read(key: 'jwt');
+      _log.fine('Read JWT from secure storage: ${token ?? "null"}');
+      return token;
     }
   }
 
   Future<String?> _mobileSignIn(String authUrl) async {
-    
+    _log.info('Mobile sign-in flow not implemented. URL=$authUrl');
     return null;
   }
 
   String _getFrontendOrigin() {
-   
     try {
       final loc = html.window.location;
       final origin = '${loc.protocol}//${loc.host}';
+      _log.fine('Frontend origin: $origin');
       return origin;
-    } catch (_) {
+    } catch (e) {
+      _log.warning('Error reading frontend origin: $e');
       return '';
     }
   }
 
-  
   String _getServerOrigin() {
     try {
       final uri = Uri.parse(serverBase);
-      return uri.origin; 
-    } catch (_) {
+      final origin = uri.origin;
+      _log.fine('Server origin: $origin');
+      return origin;
+    } catch (e) {
+      _log.warning('Error reading server origin: $e');
       return '';
     }
   }
