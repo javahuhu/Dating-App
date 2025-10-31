@@ -4,35 +4,62 @@ import 'dart:typed_data';
 import 'dart:io' show File;
 import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as path;
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class ProfileApi {
-  // If testing on Android emulator, change to 'http://10.0.2.2:3000' (see note below)
   final String baseUrl = 'http://localhost:3000';
 
+  Future<UserinformationModel?> fetchProfile(String token) async {
+    try {
+      final resp = await http.get(
+        Uri.parse('$baseUrl/api/profile/megl'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
 
-   Future<UserinformationModel?> fetchProfile(String token) async {
-    // Example: call /me or /profile endpoint and parse UserinformationModel
-    // Use your existing HTTP client here.
-    final resp = await http.get(
-      Uri.parse('$baseUrl/api/profile/me'),
-      headers: {'Authorization': 'Bearer $token'},
-    );
+      print('Fetch profile status: ${resp.statusCode}');
 
-    if (resp.statusCode == 200) {
-      final json = jsonDecode(resp.body);
-      return UserinformationModel.fromMap(json);
+      if (resp.statusCode == 200) {
+        final dynamic jsonBody = jsonDecode(resp.body);
+
+        // Handle different response formats with proper type casting
+        Map<String, dynamic> userMap;
+
+        if (jsonBody is Map && jsonBody.containsKey('user')) {
+          userMap = Map<String, dynamic>.from(jsonBody['user'] as Map);
+        } else if (jsonBody is Map) {
+          userMap = Map<String, dynamic>.from(jsonBody);
+        } else {
+          return null;
+        }
+
+        return UserinformationModel.fromMap(userMap);
+      } else if (resp.statusCode == 404) {
+        // Profile doesn't exist yet
+        print('Profile not found (404) - new user');
+        return null;
+      } else {
+        print('Failed to fetch profile: ${resp.statusCode}');
+        return null;
+      }
+    } catch (e, st) {
+      print('Profile fetch error: $e');
+      return null;
     }
-    return null;
   }
 
-  
   Future<UserinformationModel> uploadProfile({
     required String token,
     required String name,
     required int age,
     required String bio,
+    String? personality,
+    String? gender,
+    String? motivation,
+    String? frustration,
+    String? tags,
     File? imageFile,
     Uint8List? imageBytes,
     String? filename,
@@ -40,53 +67,101 @@ class ProfileApi {
     final uri = Uri.parse('$baseUrl/api/profile');
 
     try {
-      // No image -> JSON POST
+      // If no file, do a JSON post
       if (imageFile == null && imageBytes == null) {
+        final body = <String, dynamic>{'name': name, 'age': age, 'bio': bio};
+
+        if (gender != null && gender.isNotEmpty) {
+          body['gender'] = gender;
+        }
+        if (personality != null && personality.isNotEmpty) {
+          body['personality'] = personality;
+        }
+        if (motivation != null && motivation.isNotEmpty) {
+          body['motivation'] = motivation;
+        }
+        if (frustration != null && frustration.isNotEmpty) {
+          body['frustration'] = frustration;
+        }
+        if (tags != null && tags.isNotEmpty) {
+          body['tags'] = tags; // FIXED: Changed from 'frustration' to 'tags'
+        }
+
+        print('Uploading profile data: $body');
+
         final resp = await http.post(
           uri,
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({'name': name, 'age': age, 'bio': bio}),
+          body: jsonEncode(body),
         );
 
         if (resp.statusCode >= 200 && resp.statusCode < 300) {
-          final j = jsonDecode(resp.body) as Map<String, dynamic>;
-          final userJson = j['user'] as Map<String, dynamic>;
-          return UserinformationModel.fromMap(userJson);
+          final dynamic jsonBody = jsonDecode(resp.body);
+          Map<String, dynamic> userMap;
+
+          if (jsonBody is Map && jsonBody.containsKey('user')) {
+            userMap = Map<String, dynamic>.from(jsonBody['user'] as Map);
+          } else {
+            userMap = Map<String, dynamic>.from(jsonBody);
+          }
+
+          return UserinformationModel.fromMap(userMap);
         } else {
-          throw Exception('Failed to upload profile: ${resp.statusCode} ${resp.body}');
+          throw Exception(
+            'Failed to upload profile: ${resp.statusCode} ${resp.body}',
+          );
         }
       }
 
-      // Multipart upload
+      // Multipart upload with image
       final request = http.MultipartRequest('POST', uri)
-        ..headers['Authorization'] = 'Bearer $token'
-        ..fields['name'] = name
-        ..fields['age'] = age.toString()
-        ..fields['bio'] = bio;
+        ..headers['Authorization'] = 'Bearer $token';
 
+      // Required fields
+      request.fields['name'] = name;
+      request.fields['age'] = age.toString();
+      request.fields['bio'] = bio;
+
+      if (gender != null && gender.isNotEmpty) {
+        request.fields['gender'] = gender;
+      }
+      if (personality != null && personality.isNotEmpty) {
+        request.fields['personality'] = personality;
+      }
+      if (motivation != null && motivation.isNotEmpty) {
+        request.fields['motivation'] = motivation;
+      }
+      if (frustration != null && frustration.isNotEmpty) {
+        request.fields['frustration'] = frustration;
+      }
+      if (tags != null && tags.isNotEmpty) {
+        // ADDED: Include tags in multipart
+        request.fields['tags'] = tags;
+      }
+
+      // Handle image
       if (kIsWeb) {
-        // Web: must use bytes
-        if (imageBytes == null) throw Exception('On web you must provide imageBytes and filename');
-        final fName = filename ?? 'upload_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final multipart = http.MultipartFile.fromBytes('profilePicture', imageBytes, filename: fName);
-        request.files.add(multipart);
+        if (imageBytes != null) {
+          final fName =
+              filename ??
+              'profile_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final multipart = http.MultipartFile.fromBytes(
+            'profilePicture',
+            imageBytes,
+            filename: fName,
+          );
+          request.files.add(multipart);
+        }
       } else {
-        // Non-web: prefer fromPath, fallback to bytes
-        if (imageFile != null && imageFile.path.isNotEmpty) {
-          final filePath = imageFile.path;
-          final fName = path.basename(filePath);
-          final multipart = await http.MultipartFile.fromPath('profilePicture', filePath, filename: fName);
+        if (imageFile != null) {
+          final multipart = await http.MultipartFile.fromPath(
+            'profilePicture',
+            imageFile.path,
+          );
           request.files.add(multipart);
-        } else if (imageBytes != null) {
-          final fName = filename ?? 'upload_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          final multipart = http.MultipartFile.fromBytes('profilePicture', imageBytes, filename: fName);
-          request.files.add(multipart);
-        } else {
-          throw Exception('No valid image provided for upload');
         }
       }
 
@@ -94,14 +169,22 @@ class ProfileApi {
       final resp = await http.Response.fromStream(streamedResponse);
 
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
-        final j = jsonDecode(resp.body) as Map<String, dynamic>;
-        final userJson = j['user'] as Map<String, dynamic>;
-        return UserinformationModel.fromMap(userJson);
+        final dynamic jsonBody = jsonDecode(resp.body);
+        Map<String, dynamic> userMap;
+
+        if (jsonBody is Map && jsonBody.containsKey('user')) {
+          userMap = Map<String, dynamic>.from(jsonBody['user'] as Map);
+        } else {
+          userMap = Map<String, dynamic>.from(jsonBody);
+        }
+
+        return UserinformationModel.fromMap(userMap);
       } else {
-        throw Exception('Failed multipart upload: ${resp.statusCode} ${resp.body}');
+        throw Exception('Upload failed: ${resp.statusCode} ${resp.body}');
       }
-    } catch (e, st) {
-      throw Exception('Profile upload error: $e\n$st');
+    } catch (e) {
+      print('Profile upload error: $e');
+      throw Exception('Profile upload failed: $e');
     }
   }
 }

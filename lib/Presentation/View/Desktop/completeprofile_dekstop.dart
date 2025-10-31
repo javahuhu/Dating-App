@@ -1,6 +1,8 @@
 import 'dart:io';
-import 'package:dating_app/Core/Auth/auth_storage.dart';
+import 'package:dating_app/Core/AuthStorage/auth_storage.dart';
+import 'package:dating_app/Core/Theme/colors.dart';
 import 'package:dating_app/Data/API/profile_api.dart';
+import 'package:dating_app/Data/API/social_api.dart';
 import 'package:dating_app/Presentation/Provider/profile_provider.dart';
 import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:file_picker/file_picker.dart';
@@ -9,16 +11,8 @@ import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-// Import global providers
 
-const Color kTitleColor = Color(0xFF2D2D2D);
-const Color kBodyTextColor = Color(0xFF4F4F4F);
-const Color kPrimaryColor = Color(0xFFE91E63);
-const Color kSecondaryColor = Color(0xFFCFA7F6);
-const Color kAccentColor = Color(0xFFFFDCA8);
-const Color kBackgroundColor = Color(0xFFFAF6F9);
-const Color subtextViolet = Color(0xFF4B3B9A);
-const Color headingViolet = Color(0xFF3D2C8D);
+
 
 // REMOVED: Local provider definitions - now using global ones from profile_providers.dart
 
@@ -113,8 +107,8 @@ class ProfileSetupPageDesktop extends HookConsumerWidget {
     ScaffoldMessenger.of(context).showSnackBar(uploadingSnack);
 
     try {
-      // get token (works for web + mobile)
-      final token = await readToken();
+      
+      final token = kIsWeb ? await SocialAuth().readToken() : await readToken();
 
       if (token == null || token.isEmpty) {
         if (context.mounted) {

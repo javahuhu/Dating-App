@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:html' as html;
 import 'package:logging/logging.dart';
 
+
 class SocialAuth {
   final String serverBase = 'http://localhost:3000/api/auth';
   final _secureStorage = const FlutterSecureStorage();

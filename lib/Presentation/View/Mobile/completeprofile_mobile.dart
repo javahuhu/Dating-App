@@ -1,8 +1,11 @@
-import 'package:dating_app/Core/Auth/auth_storage.dart';
+
+import 'package:dating_app/Core/AuthStorage/auth_storage.dart';
 import 'package:dating_app/Data/API/profile_api.dart';
+import 'package:dating_app/Data/API/social_api.dart';
 import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:dating_app/Presentation/Provider/profile_provider.dart';
 import 'package:dating_app/Presentation/View/Desktop/completeprofile_dekstop.dart';
+import 'package:dating_app/core/theme/colors.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -13,20 +16,11 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 
-const Color kTitleColor = Color(0xFF2D2D2D);
-const Color kBodyTextColor = Color(0xFF4F4F4F);
-const Color kPrimaryColor = Color(0xFFE91E63);
-const Color kSecondaryColor = Color(0xFFCFA7F6);
-const Color kAccentColor = Color(0xFFFFDCA8);
-const Color kBackgroundColor = Color(0xFFFAF6F9);
-const Color subtextViolet = Color(0xFF4B3B9A);
-const Color headingViolet = Color(0xFF3D2C8D);
 
-/// Mobile Profile Setup with Global Providers
 class ProfileSetupMobile extends ConsumerWidget {
   const ProfileSetupMobile({super.key});
 
-  // clampScale tuned for mobile (target width 575)
+ 
   double clampScale(double width, double base, double min, double max) {
     const double target = 575.0;
     final raw = width / target;
@@ -48,12 +42,11 @@ class ProfileSetupMobile extends ConsumerWidget {
       }
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error picking image: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error picking image: $e')));
     }
   }
-
 
   /// Convert PlatformFile -> File (handles path OR bytes)
   Future<File> _platformFileToFile(PlatformFile pf) async {
@@ -74,124 +67,122 @@ class ProfileSetupMobile extends ConsumerWidget {
     return tempFile;
   }
 
-  
-Future<void> _submitProfile(
-  BuildContext context,
-  GlobalKey<FormState> formKey,
-  WidgetRef ref,
-) async {
-  final filePlatform = ref.read(selectedFileProvider);
-  final nameCtl = ref.read(nameprofileControllerProvider);
-  final ageCtl = ref.read(ageControllerProvider);
-  final bioCtl = ref.read(bioControllerProvider);
+  Future<void> _submitProfile(
+    BuildContext context,
+    GlobalKey<FormState> formKey,
+    WidgetRef ref,
+  ) async {
+    final filePlatform = ref.read(selectedFileProvider);
+    final nameCtl = ref.read(nameprofileControllerProvider);
+    final ageCtl = ref.read(ageControllerProvider);
+    final bioCtl = ref.read(bioControllerProvider);
 
-  if (!formKey.currentState!.validate()) return;
+    if (!formKey.currentState!.validate()) return;
 
-  if (filePlatform == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('Please upload a profile picture'),
-        backgroundColor: kPrimaryColor,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-      ),
-    );
-    return;
-  }
-
-  final uploadingSnack = SnackBar(
-    content: Row(
-      children: const [
-        SizedBox(width: 4),
-        CircularProgressIndicator(strokeWidth: 2),
-        SizedBox(width: 12),
-        Expanded(child: Text('Uploading profile...')),
-      ],
-    ),
-    backgroundColor: kPrimaryColor,
-    behavior: SnackBarBehavior.floating,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-    duration: const Duration(minutes: 5),
-  );
-
-  ScaffoldMessenger.of(context).showSnackBar(uploadingSnack);
-
-  try {
-    // get token (works for web + mobile)
-    final token = await readToken();
-
-    if (token == null || token.isEmpty) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('You must be logged in to create a profile'),
-            backgroundColor: kPrimaryColor,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+    if (filePlatform == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please upload a profile picture'),
+          backgroundColor: kPrimaryColor,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
-        );
-      }
+        ),
+      );
       return;
     }
 
-    final name = nameCtl.text.trim();
-    final age = int.tryParse(ageCtl.text.trim()) ?? 0;
-    final bio = bioCtl.text.trim();
+    final uploadingSnack = SnackBar(
+      content: Row(
+        children: const [
+          SizedBox(width: 4),
+          CircularProgressIndicator(strokeWidth: 2),
+          SizedBox(width: 12),
+          Expanded(child: Text('Uploading profile...')),
+        ],
+      ),
+      backgroundColor: kPrimaryColor,
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      duration: const Duration(minutes: 5),
+    );
 
-    final api = ProfileApi();
-    late final UserinformationModel updatedUser;
+    ScaffoldMessenger.of(context).showSnackBar(uploadingSnack);
 
-    // platformFile may be PlatformFile or a wrapper; extract safely
-    PlatformFile? platformFile;
-    if (filePlatform is PlatformFile) {
-      platformFile = filePlatform;
-    } else if (filePlatform != null && filePlatform is ValueNotifier) {
-      platformFile = (filePlatform as ValueNotifier<PlatformFile?>).value;
-    } else {
-      // Defensive fallback: try to cast dynamically
-      try {
-        platformFile = filePlatform as PlatformFile?;
-      } catch (_) {
-        platformFile = null;
+    try {
+      final token = kIsWeb ? await SocialAuth().readToken() : await readToken();
+
+      if (token == null || token.isEmpty) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('You must be logged in to create a profile'),
+              backgroundColor: kPrimaryColor,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          );
+        }
+        return;
       }
-    }
 
-    if (platformFile == null) {
-      throw Exception('Selected file is invalid.');
-    }
+      final name = nameCtl.text.trim();
+      final age = int.tryParse(ageCtl.text.trim()) ?? 0;
+      final bio = bioCtl.text.trim();
 
-    if (kIsWeb) {
-      // on web use bytes + filename
-      final bytes = platformFile.bytes;
-      final filename = platformFile.name;
-      if (bytes == null || bytes.isEmpty) {
-        throw Exception('Selected file has no bytes (web).');
+      final api = ProfileApi();
+      late final UserinformationModel updatedUser;
+
+     
+      PlatformFile? platformFile;
+      if (filePlatform is PlatformFile) {
+        platformFile = filePlatform;
+      } else if (filePlatform != null && filePlatform is ValueNotifier) {
+        platformFile = (filePlatform as ValueNotifier<PlatformFile?>).value;
+      } else {
+        // Defensive fallback: try to cast dynamically
+        try {
+          platformFile = filePlatform as PlatformFile?;
+        } catch (_) {
+          platformFile = null;
+        }
       }
-      updatedUser = await api.uploadProfile(
-        token: token,
-        name: name,
-        age: age,
-        bio: bio,
-        imageBytes: bytes,
-        filename: filename,
-      );
-    } else {
-      // non-web: convert to dart:io File and upload
-      final imageFile = await _platformFileToFile(platformFile);
-      updatedUser = await api.uploadProfile(
-        token: token,
-        name: name,
-        age: age,
-        bio: bio,
-        imageFile: imageFile,
-      );
-    }
-  if (!context.mounted) return;
+
+      if (platformFile == null) {
+        throw Exception('Selected file is invalid.');
+      }
+
+      if (kIsWeb) {
+        // on web use bytes + filename
+        final bytes = platformFile.bytes;
+        final filename = platformFile.name;
+        if (bytes == null || bytes.isEmpty) {
+          throw Exception('Selected file has no bytes (web).');
+        }
+        updatedUser = await api.uploadProfile(
+          token: token,
+          name: name,
+          age: age,
+          bio: bio,
+          imageBytes: bytes,
+          filename: filename,
+        );
+      } else {
+        // non-web: convert to dart:io File and upload
+        final imageFile = await _platformFileToFile(platformFile);
+        updatedUser = await api.uploadProfile(
+          token: token,
+          name: name,
+          age: age,
+          bio: bio,
+          imageFile: imageFile,
+        );
+      }
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -207,28 +198,27 @@ Future<void> _submitProfile(
       if (!context.mounted) return;
       context.go('/homepage');
 
-    if (!context.mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => ProfileResultScreen(user: updatedUser),
-      ),
-    );
-  } catch (e, st) {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-    debugPrint('Profile upload failed: $e\n$st');
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Upload failed: $e'),
-        backgroundColor: Colors.redAccent,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+      if (!context.mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => ProfileResultScreen(user: updatedUser),
         ),
-      ),
-    );
+      );
+    } catch (e, st) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      debugPrint('Profile upload failed: $e\n$st');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Upload failed: $e'),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+        ),
+      );
+    }
   }
-}
-
 
   Widget _textField({
     required double width,
@@ -453,9 +443,8 @@ Future<void> _submitProfile(
               label: 'Name',
               hint: 'Enter your name',
               icon: Icons.person_rounded,
-              validator: (v) => v == null || v.isEmpty
-                  ? 'Please enter your name'
-                  : null,
+              validator: (v) =>
+                  v == null || v.isEmpty ? 'Please enter your name' : null,
             ),
             SizedBox(height: cs(12, 10, 18)),
             _textField(
@@ -501,7 +490,7 @@ Future<void> _submitProfile(
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: kPrimaryColor.withValues(alpha:0.12),
+                    color: kPrimaryColor.withValues(alpha: 0.12),
                     blurRadius: 16,
                     offset: const Offset(0, 8),
                   ),
@@ -550,7 +539,11 @@ Future<void> _submitProfile(
                 child: Center(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                    child: _buildForm(mediaWidth.clamp(0.0, 575.0), ref, context),
+                    child: _buildForm(
+                      mediaWidth.clamp(0.0, 575.0),
+                      ref,
+                      context,
+                    ),
                   ),
                 ),
               ),

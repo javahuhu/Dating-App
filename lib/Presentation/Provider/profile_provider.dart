@@ -1,5 +1,5 @@
-// providers/profile_providers.dart
-import 'package:dating_app/Core/Auth/auth_storage.dart';
+
+import 'package:dating_app/Core/AuthStorage/auth_storage.dart';
 import 'package:dating_app/Data/API/profile_api.dart';
 import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:file_picker/file_picker.dart';

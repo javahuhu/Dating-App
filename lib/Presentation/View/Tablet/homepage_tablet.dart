@@ -1,346 +1,298 @@
-// main.dart
+
+import 'package:dating_app/Presentation/View/Tablet/match_page_tablet.dart';
+import 'package:flutter_hooks/flutter_hooks.dart';
 import 'package:flutter/material.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
+import 'package:dating_app/Data/API/discovery_api.dart';
+import 'package:dating_app/core/theme/colors.dart';
+import 'package:dating_app/Presentation/View/Desktop/match_page_desktop.dart';
+import 'package:dating_app/Presentation/View/Desktop/message_page.dart';
 import 'package:hooks_riverpod/legacy.dart';
 
-//// Color Palette
-const Color kTitleColor = Color(0xFF2D2D2D);
-const Color kBodyTextColor = Color(0xFF4F4F4F);
-const Color kPrimaryColor = Color(0xFFE91E63);
-const Color kSecondaryColor = Color(0xFFCFA7F6);
-const Color kAccentColor = Color(0xFFFFDCA8);
-const Color kBackgroundColor = Color(0xFFFAF6F9);
-const Color subtextViolet = Color(0xFF4B3B9A);
-const Color headingViolet = Color(0xFF3D2C8D);
-
-void main() {
-  runApp(const ProviderScope(child: KismetApp()));
-}
-
+// ---------------- Providers ----------------
 final selectedIndexProvider = StateProvider<int>((ref) => 0);
 final currentProfileIndexProvider = StateProvider<int>((ref) => 0);
+final seenProfilesProvider = StateProvider<Set<String>>((ref) => <String>{});
+final selectedPartnerIdProvider = StateProvider<String>((ref) => '');
 
-final profilesProvider = Provider<List<ProfileCard>>(
-  (ref) => [
-    ProfileCard(
-      name: 'Sarah',
-      age: 28,
-      bio: 'Adventure seeker | Coffee enthusiast | Love hiking & photography',
-      distance: '2 miles away',
-      images: [
-        'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1200',
-      ],
-    ),
-    ProfileCard(
-      name: 'Emily',
-      age: 26,
-      bio: 'Artist & dreamer | Plant mom 🌿 | Looking for genuine connections',
-      distance: '5 miles away',
-      images: [
-        'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=1200',
-      ],
-    ),
-    ProfileCard(
-      name: 'Jessica',
-      age: 30,
-      bio:
-          'Foodie | Travel addict ✈️ | Dog lover | Always up for new experiences',
-      distance: '3 miles away',
-      images: [
-        'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1200',
-      ],
-    ),
-  ],
+// filters
+final minAgeProvider = StateProvider<int>((ref) => 18);
+final maxAgeProvider = StateProvider<int>((ref) => 50);
+final maxDistanceProvider = StateProvider<int>((ref) => 50);
+final filtersAppliedToggleProvider = StateProvider<int>((ref) => 0);
+
+// Discovery API Provider
+final discoveryApiProvider = Provider<DiscoveryApi>((ref) {
+  return DiscoveryApi(baseUrl: 'http://localhost:3000');
+});
+
+// provider that fetches discovery profiles
+final discoveryProfilesProvider = FutureProvider.autoDispose<List<ProfileCard>>(
+  (ref) async {
+    final minAge = ref.watch(minAgeProvider);
+    final maxAge = ref.watch(maxAgeProvider);
+    final maxDistance = ref.watch(maxDistanceProvider);
+    ref.watch(filtersAppliedToggleProvider);
+
+    const double lat = 14.5995; // Manila
+    const double lon = 120.9842;
+
+    final api = ref.read(discoveryApiProvider);
+    final List<Map<String, dynamic>> raw = await api.fetchProfiles(
+      lat: lat,
+      lon: lon,
+      page: 0,
+      limit: 100,
+      minAge: minAge,
+      maxAge: maxAge,
+      maxDistanceKm: maxDistance.toDouble(),
+    );
+
+    return raw.map<ProfileCard>((m) {
+      final map = Map<String, dynamic>.from(m);
+      final id = (map['_id'] ?? '').toString();
+      final name = (map['name'] ?? 'Unknown').toString();
+      final age = (map['age'] is int)
+          ? map['age']
+          : int.tryParse(map['age'].toString()) ?? 0;
+      final bio = (map['bio'] ?? 'No bio').toString();
+      final imageUrl =
+          (map['profilePicture'] ?? 'https://via.placeholder.com/800x1000.png')
+              .toString();
+
+      return ProfileCard(
+        id: id,
+        name: name,
+        age: age,
+        bio: bio,
+        distance: map['distance']?.toString() ?? 'Unknown',
+        images: [imageUrl],
+        interests: (map['tags'] ?? []).toString(),
+      );
+    }).toList();
+  },
 );
 
-class KismetApp extends HookConsumerWidget {
-  const KismetApp({super.key});
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return MaterialApp(
-      title: 'Kismet',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primaryColor: kPrimaryColor,
-        scaffoldBackgroundColor: kBackgroundColor,
-        fontFamily: 'SF Pro Display',
-      ),
-      home: const KismetHomePage(),
-    );
-  }
+// -------------------- MAIN APP --------------------
+void main() {
+  runApp(const ProviderScope(child: TabletHomePage()));
 }
 
-class KismetHomePage extends HookConsumerWidget {
-  const KismetHomePage({super.key});
+class TabletHomePage extends HookConsumerWidget {
+  const TabletHomePage({super.key});
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final selectedIndex = ref.watch(selectedIndexProvider);
     final currentProfileIndex = ref.watch(currentProfileIndexProvider);
-    final profiles = ref.watch(profilesProvider);
+    final profilesAsync = ref.watch(discoveryProfilesProvider);
+    final seen = ref.watch(seenProfilesProvider);
 
-    // Responsive breakpoints:
-    // - Tablet: screenWidth <= 1100 -> clamp max width to 1100
-    // - Desktop: screenWidth > 1100 -> clamp 1024..2560
     final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth <= 1100.0;
-
-    final clampedWidth = isTablet
-        ? screenWidth.clamp(720.0, 1100.0) // tablet range (min comfortable 720)
-        : screenWidth.clamp(1024.0, 2560.0); // desktop range
-
-    // Sidebar and paddings adapt for tablet vs desktop
-    final navWidth = isTablet
-        ? (clampedWidth * 0.18).clamp(
-            160.0,
-            260.0,
-          ) // narrower sidebar on tablet
-        : (clampedWidth * 0.18).clamp(220.0, 340.0);
-
+    final clampedWidth = screenWidth.clamp(720.0, 1100.0);
+    final navWidth = (clampedWidth * 0.18).clamp(180.0, 240.0);
     final contentWidth = clampedWidth - navWidth;
-    final horizontalPadding = isTablet
-        ? (contentWidth * 0.06).clamp(20.0, 60.0) // smaller paddings on tablet
-        : (contentWidth * 0.08).clamp(40.0, 140.0);
 
-    void onNavTap(int idx) =>
-        ref.read(selectedIndexProvider.notifier).state = idx;
-
-    void swipeCard(bool liked) {
-      final notifier = ref.read(currentProfileIndexProvider.notifier);
-      final next = notifier.state < profiles.length - 1
-          ? notifier.state + 1
-          : 0;
-      notifier.state = next;
+    // ----------- LIKE -------------
+    Future<void> handleLike(
+      BuildContext ctx,
+      WidgetRef r,
+      ProfileCard card,
+    ) async {
+      final api = r.read(discoveryApiProvider);
+      try {
+        final res = await api.like(card.id);
+        final matched =
+            res != null && (res['matched'] == true || res['matched'] == 'true');
+        if (matched) {
+          ScaffoldMessenger.of(
+            ctx,
+          ).showSnackBar(const SnackBar(content: Text("🎉 It's a Match!")));
+          r.read(selectedIndexProvider.notifier).state = 1; // Go to matches
+        } else {
+          ScaffoldMessenger.of(ctx).showSnackBar(
+            const SnackBar(content: Text("❤️ You liked this profile")),
+          );
+        }
+      } catch (e) {
+        ScaffoldMessenger.of(
+          ctx,
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
     }
 
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: isTablet ? 1100.0 : 2560.0),
-          child: Row(
-            children: [
-              // Sidebar
-              Container(
-                width: navWidth,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: kPrimaryColor.withValues(alpha: 0.08),
-                      blurRadius: 20,
-                      offset: const Offset(2, 0),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 28),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [kPrimaryColor, kSecondaryColor],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.favorite_rounded,
-                              color: Colors.white,
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Flexible(
-                            child: Text(
-                              'Kismet',
-                              style: TextStyle(
-                                fontSize: isTablet ? 22 : 28,
-                                fontWeight: FontWeight.bold,
-                                color: headingViolet,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: isTablet ? 28 : 50),
-                    _navItem(
-                      Icons.explore_rounded,
-                      'Discover',
-                      0,
-                      selectedIndex,
-                      onNavTap,
-                      isTablet: isTablet,
-                    ),
-                    _navItem(
-                      Icons.favorite_rounded,
-                      'Matches',
-                      1,
-                      selectedIndex,
-                      onNavTap,
-                      isTablet: isTablet,
-                    ),
-                    _navItem(
-                      Icons.chat_bubble_rounded,
-                      'Messages',
-                      2,
-                      selectedIndex,
-                      onNavTap,
-                      isTablet: isTablet,
-                    ),
-                    _navItem(
-                      Icons.person_rounded,
-                      'Profile',
-                      3,
-                      selectedIndex,
-                      onNavTap,
-                      isTablet: isTablet,
-                    ),
-                    _navItem(
-                      Icons.settings_rounded,
-                      'Settings',
-                      4,
-                      selectedIndex,
-                      onNavTap,
-                      isTablet: isTablet,
-                    ),
-                    const Spacer(),
-                    Padding(
-                      padding: EdgeInsets.all(isTablet ? 16 : 24),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: isTablet ? 18 : 20,
-                            backgroundImage: const NetworkImage(
-                              'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200',
-                            ),
-                          ),
-                          SizedBox(width: isTablet ? 10 : 12),
-                          if (!isTablet)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'You',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: kTitleColor,
-                                  ),
-                                ),
-                                Text(
-                                  'View Profile',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: subtextViolet,
-                                  ),
-                                ),
-                              ],
-                            )
-                          else
-                            // For tighter tablet bottom row, show only name
-                            Flexible(
-                              child: Text(
-                                'You',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  color: kTitleColor,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+    // ----------- SKIP -------------
+    Future<void> handleSkip(
+      BuildContext ctx,
+      WidgetRef r,
+      ProfileCard card,
+    ) async {
+      final api = r.read(discoveryApiProvider);
+      try {
+        await api.skip(card.id);
+        ScaffoldMessenger.of(
+          ctx,
+        ).showSnackBar(const SnackBar(content: Text("⏭️ Skipped")));
+      } catch (e) {
+        ScaffoldMessenger.of(
+          ctx,
+        ).showSnackBar(SnackBar(content: Text("Skip failed: $e")));
+      }
+    }
 
-              // Main content area
-              Expanded(
-                child: Container(
-                  width: contentWidth,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: horizontalPadding,
-                    vertical: isTablet ? 24 : 40,
-                  ),
-                  child: selectedIndex == 0
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Discover',
-                              style: TextStyle(
-                                fontSize: isTablet ? 28 : 36,
-                                fontWeight: FontWeight.bold,
-                                color: headingViolet,
-                              ),
-                            ),
-                            SizedBox(height: isTablet ? 6 : 8),
-                            Text(
-                              'Find your perfect match',
-                              style: TextStyle(
-                                fontSize: isTablet ? 14 : 16,
-                                color: subtextViolet,
-                              ),
-                            ),
-                            SizedBox(height: isTablet ? 20 : 40),
-                            Expanded(
-                              child: Center(
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 600),
-                                  switchInCurve: Curves.easeOut,
-                                  switchOutCurve: Curves.easeIn,
-                                  transitionBuilder: (child, animation) {
-                                    final offsetAnimation =
-                                        Tween<Offset>(
-                                          begin: const Offset(0.3, 0),
-                                          end: Offset.zero,
-                                        ).animate(
-                                          CurvedAnimation(
-                                            parent: animation,
-                                            curve: Curves.easeOutCubic,
-                                          ),
-                                        );
-                                    return FadeTransition(
-                                      opacity: animation,
-                                      child: SlideTransition(
-                                        position: offsetAnimation,
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                  child: _ProfileCardWrapper(
-                                    key: ValueKey<int>(currentProfileIndex),
-                                    profile: profiles[currentProfileIndex],
-                                    onLike: () => swipeCard(true),
-                                    onDislike: () => swipeCard(false),
-                                    isTablet: isTablet,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Center(
-                          child: Text(
-                            _getPageTitle(selectedIndex),
+    // ----------- SWIPE NAVIGATION -------------
+    void swipeAdvance(int visibleCount) {
+      final notifier = ref.read(currentProfileIndexProvider.notifier);
+      notifier.state = (notifier.state + 1) % visibleCount;
+    }
+
+    // -------------------- UI --------------------
+    return Scaffold(
+      body: Row(
+        children: [
+          // Sidebar
+          Container(
+            width: navWidth,
+            color: Colors.white,
+            child: Column(
+              children: [
+                const SizedBox(height: 40),
+                const Icon(Icons.favorite, color: Colors.pink, size: 40),
+                const SizedBox(height: 20),
+                _navItem(
+                  Icons.explore_rounded,
+                  "Discover",
+                  0,
+                  selectedIndex,
+                  ref,
+                ),
+                _navItem(
+                  Icons.favorite_rounded,
+                  "Matches",
+                  1,
+                  selectedIndex,
+                  ref,
+                ),
+                _navItem(
+                  Icons.chat_bubble_rounded,
+                  "Messages",
+                  2,
+                  selectedIndex,
+                  ref,
+                ),
+                
+              ],
+            ),
+          ),
+
+          // Main content
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Builder(
+                builder: (context) {
+                  switch (selectedIndex) {
+                    case 0:
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            "Discover",
                             style: TextStyle(
-                              fontSize: isTablet ? 22 : 32,
+                              fontSize: 32,
                               fontWeight: FontWeight.bold,
-                              color: headingViolet,
                             ),
                           ),
-                        ),
-                ),
+                          const SizedBox(height: 8),
+                          const _SimpleFiltersCard(),
+                          const SizedBox(height: 20),
+                          Expanded(
+                            child: profilesAsync.when(
+                              data: (profiles) {
+                                final unseen = profiles
+                                    .where((p) => !seen.contains(p.id))
+                                    .toList();
+                                if (unseen.isEmpty) {
+                                  return const Center(
+                                    child: Text("No profiles found"),
+                                  );
+                                }
+
+                                final idx = currentProfileIndex.clamp(
+                                  0,
+                                  unseen.length - 1,
+                                );
+                                final card = unseen[idx];
+
+                                return Center(
+                                  child: _DraggableProfileCard(
+                                    profile: card,
+                                    onSwipeLeft: () async {
+                                      final seenNotifier = ref.read(
+                                        seenProfilesProvider.notifier,
+                                      );
+                                      seenNotifier.state = {
+                                        ...seenNotifier.state,
+                                        card.id,
+                                      };
+                                      swipeAdvance(unseen.length);
+                                      await handleSkip(context, ref, card);
+                                    },
+                                    onSwipeRight: () async {
+                                      final seenNotifier = ref.read(
+                                        seenProfilesProvider.notifier,
+                                      );
+                                      seenNotifier.state = {
+                                        ...seenNotifier.state,
+                                        card.id,
+                                      };
+                                      swipeAdvance(unseen.length);
+                                      await handleLike(context, ref, card);
+                                    },
+                                  ),
+                                );
+                              },
+                              loading: () => const Center(
+                                child: CircularProgressIndicator(),
+                              ),
+                              error: (err, st) =>
+                                  Center(child: Text("Error: $err")),
+                            ),
+                          ),
+                        ],
+                      );
+
+                    case 1:
+                      return MessagesPageDesktop(
+                        onOpenProfile: (id) {
+                          ref.read(selectedPartnerIdProvider.notifier).state =
+                              id;
+                          ref.read(selectedIndexProvider.notifier).state = 3;
+                        },
+                        onOpenChat: (id) {
+                          ref.read(selectedPartnerIdProvider.notifier).state =
+                              id;
+                          ref.read(selectedIndexProvider.notifier).state = 2;
+                        },
+                      );
+
+                    case 2:
+                      return MatchPageTablet(
+                        onNavigateToMatches: () {
+                          ref.read(selectedIndexProvider.notifier).state = 1;
+                        },
+                      );
+
+                    
+
+                    default:
+                      return const Center(child: Text("Settings"));
+                  }
+                },
               ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -350,50 +302,28 @@ class KismetHomePage extends HookConsumerWidget {
     String label,
     int index,
     int selected,
-    void Function(int) onTap, {
-    required bool isTablet,
-  }) {
+    WidgetRef ref,
+  ) {
     final isSelected = index == selected;
     return GestureDetector(
-      onTap: () => onTap(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        margin: EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: isTablet ? 6 : 8,
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: isTablet ? 10 : 14,
-        ),
+      onTap: () => ref.read(selectedIndexProvider.notifier).state = index,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
         decoration: BoxDecoration(
           color: isSelected
-              ? kPrimaryColor.withValues(alpha: 0.1)
+              ? kPrimaryColor.withOpacity(0.1)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected
-                ? kPrimaryColor.withValues(alpha: 0.25)
-                : Colors.transparent,
-          ),
         ),
         child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              color: isSelected ? kPrimaryColor : kBodyTextColor,
-              size: isTablet ? 20 : 24,
-            ),
-            SizedBox(width: isTablet ? 12 : 16),
-            Expanded(
-              child: Text(
-                label,
-                style: TextStyle(
-                  fontSize: isTablet ? 14 : 16,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? kPrimaryColor : kBodyTextColor,
-                ),
-                overflow: TextOverflow.ellipsis,
+            Icon(icon, color: isSelected ? kPrimaryColor : Colors.grey),
+            const SizedBox(width: 10),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? kPrimaryColor : Colors.black87,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -401,224 +331,211 @@ class KismetHomePage extends HookConsumerWidget {
       ),
     );
   }
-
-  String _getPageTitle(int index) {
-    switch (index) {
-      case 1:
-        return 'Matches';
-      case 2:
-        return 'Messages';
-      case 3:
-        return 'Profile';
-      case 4:
-        return 'Settings';
-      default:
-        return 'Discover';
-    }
-  }
 }
 
-/// ProfileCard wrapper used by AnimatedSwitcher
-class _ProfileCardWrapper extends StatelessWidget {
-  final ProfileCard profile;
-  final VoidCallback onLike;
-  final VoidCallback onDislike;
-  final bool isTablet;
-
-  const _ProfileCardWrapper({
-    required Key key,
-    required this.profile,
-    required this.onLike,
-    required this.onDislike,
-    this.isTablet = false,
-  }) : super(key: key);
-
+// -------------------- Filter Card --------------------
+class _SimpleFiltersCard extends HookConsumerWidget {
+  const _SimpleFiltersCard({super.key});
   @override
-  Widget build(BuildContext context) {
-    // Smaller card on tablet
-    final maxW = isTablet ? 480.0 : 600.0;
-    final maxH = isTablet ? 560.0 : 700.0;
+  Widget build(BuildContext context, WidgetRef ref) {
+    final minAge = ref.watch(minAgeProvider);
+    final maxAge = ref.watch(maxAgeProvider);
+    final maxDistance = ref.watch(maxDistanceProvider);
+    final tempMin = useState(minAge);
+    final tempMax = useState(maxAge);
+    final tempDist = useState(maxDistance);
 
-    return SizedBox(
-      width: maxW,
-      height: maxH + 40,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Container(
-            width: maxW,
-            height: maxH,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: [
-                BoxShadow(
-                  color: kPrimaryColor.withValues(alpha: 0.14),
-                  blurRadius: 30,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Stack(
-                fit: StackFit.expand,
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Image.network(
-                    profile.images.first,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        Container(color: Colors.grey.shade300),
-                  ),
-                  Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.transparent,
-                          Colors.black.withValues(alpha: 0.82),
-                        ],
-                        stops: const [0.52, 1.0],
-                      ),
+                  const Text("Age"),
+                  RangeSlider(
+                    values: RangeValues(
+                      tempMin.value.toDouble(),
+                      tempMax.value.toDouble(),
                     ),
+                    min: 18,
+                    max: 80,
+                    divisions: 62,
+                    onChanged: (v) {
+                      tempMin.value = v.start.round();
+                      tempMax.value = v.end.round();
+                    },
                   ),
-                  Positioned(
-                    left: 18,
-                    right: 18,
-                    bottom: 18,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              profile.name,
-                              style: TextStyle(
-                                fontSize: isTablet ? 26 : 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            SizedBox(width: isTablet ? 8 : 12),
-                            Text(
-                              '${profile.age}',
-                              style: TextStyle(
-                                fontSize: isTablet ? 20 : 28,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: isTablet ? 8 : 12),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.location_on,
-                              color: kAccentColor,
-                              size: isTablet ? 14 : 16,
-                            ),
-                            SizedBox(width: 6),
-                            Text(
-                              profile.distance,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.92),
-                                fontSize: isTablet ? 12 : 14,
-                              ),
-                            ),
-                          ],
-                        ),
-                        SizedBox(height: isTablet ? 10 : 12),
-                        Text(
-                          profile.bio,
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            fontSize: isTablet ? 13 : 15,
-                            height: 1.4,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  Text("${tempMin.value} - ${tempMax.value}"),
                 ],
               ),
             ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: -28,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _actionButton(
-                  Icons.close_rounded,
-                  kPrimaryColor,
-                  onDislike,
-                  size: isTablet ? 56 : 64,
-                ),
-                SizedBox(width: isTablet ? 18 : 24),
-                _actionButton(
-                  Icons.star_rounded,
-                  kAccentColor,
-                  () {},
-                  size: isTablet ? 50 : 56,
-                ),
-                SizedBox(width: isTablet ? 18 : 24),
-                _actionButton(
-                  Icons.favorite_rounded,
-                  kSecondaryColor,
-                  onLike,
-                  size: isTablet ? 56 : 64,
-                ),
-              ],
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text("Distance (km)"),
+                  Slider(
+                    value: tempDist.value.toDouble(),
+                    min: 1,
+                    max: 200,
+                    onChanged: (v) => tempDist.value = v.round(),
+                  ),
+                  Text("${tempDist.value} km"),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _actionButton(
-    IconData icon,
-    Color color,
-    VoidCallback onTap, {
-    double size = 64,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: color.withValues(alpha: 0.28),
-              blurRadius: 18,
-              offset: const Offset(0, 8),
+            ElevatedButton(
+              onPressed: () {
+                ref.read(minAgeProvider.notifier).state = tempMin.value;
+                ref.read(maxAgeProvider.notifier).state = tempMax.value;
+                ref.read(maxDistanceProvider.notifier).state = tempDist.value;
+                ref.read(filtersAppliedToggleProvider.notifier).state++;
+              },
+              child: const Text("Apply"),
             ),
           ],
         ),
-        child: Icon(icon, color: color, size: size * 0.5),
       ),
     );
   }
 }
 
-/// Profile model
+// -------------------- Draggable Card --------------------
+class _DraggableProfileCard extends StatefulWidget {
+  final ProfileCard profile;
+  final Future<void> Function()? onSwipeLeft;
+  final Future<void> Function()? onSwipeRight;
+
+  const _DraggableProfileCard({
+    required this.profile,
+    this.onSwipeLeft,
+    this.onSwipeRight,
+    super.key,
+  });
+
+  @override
+  State<_DraggableProfileCard> createState() => _DraggableProfileCardState();
+}
+
+class _DraggableProfileCardState extends State<_DraggableProfileCard>
+    with SingleTickerProviderStateMixin {
+  Offset _pos = Offset.zero;
+  double _rotation = 0;
+  bool _actionLocked = false;
+
+  void _onPanUpdate(DragUpdateDetails details) {
+    if (_actionLocked) return;
+    setState(() {
+      _pos += details.delta;
+      _rotation = (_pos.dx / 300) * 0.1;
+    });
+  }
+
+  Future<void> _onPanEnd(DragEndDetails details) async {
+    final vx = details.velocity.pixelsPerSecond.dx;
+    if (vx > 700 || _pos.dx > 120) {
+      setState(() => _actionLocked = true);
+      widget.onSwipeRight?.call();
+    } else if (vx < -700 || _pos.dx < -120) {
+      setState(() => _actionLocked = true);
+      widget.onSwipeLeft?.call();
+    }
+    setState(() {
+      _pos = Offset.zero;
+      _rotation = 0;
+      _actionLocked = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Transform.translate(
+      offset: _pos,
+      child: Transform.rotate(
+        angle: _rotation,
+        child: Container(
+          width: 480,
+          height: 640,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 12)],
+            image: DecorationImage(
+              image: NetworkImage(widget.profile.images.first),
+              fit: BoxFit.cover,
+            ),
+          ),
+          child: Stack(
+            children: [
+              Align(
+                alignment: Alignment.bottomLeft,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.8),
+                      ],
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.profile.name,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 28,
+                        ),
+                      ),
+                      Text(
+                        "${widget.profile.age}, ${widget.profile.distance}",
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        widget.profile.bio,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------- Model --------------------
 class ProfileCard {
+  final String id;
   final String name;
   final int age;
   final String bio;
   final String distance;
   final List<String> images;
+  final String interests;
 
   ProfileCard({
+    required this.id,
     required this.name,
     required this.age,
     required this.bio,
     required this.distance,
     required this.images,
+    required this.interests,
   });
 }

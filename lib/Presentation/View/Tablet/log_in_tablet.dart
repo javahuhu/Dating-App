@@ -1,9 +1,8 @@
 import 'dart:io';
-
 import 'package:awesome_snackbar_content/awesome_snackbar_content.dart';
 import 'package:dating_app/Application/UseCases/login_usecases.dart';
 import 'package:dating_app/Application/UseCases/user_register_usecases.dart';
-import 'package:dating_app/Core/Auth/auth_storage.dart';
+import 'package:dating_app/Core/AuthStorage/auth_storage.dart';
 import 'package:dating_app/Core/Theme/colors.dart';
 import 'package:dating_app/Data/API/login_api.dart';
 import 'package:dating_app/Data/API/profile_api.dart';
@@ -18,7 +17,8 @@ import 'package:dating_app/Presentation/Provider/login_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
-
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class LoginScreenTablet extends HookConsumerWidget {
  const LoginScreenTablet({super.key});
@@ -60,6 +60,131 @@ class LoginScreenTablet extends HookConsumerWidget {
     final double socialLeft = _clampScale(50 * scale, 30, 80);
     final double backgroundHeight = _clampScale(400 * scale, 300, 500);
     final double backgroundWidth = _clampScale(350 * scale, 280, 450);
+
+
+
+    
+    Future<void> handleGoogleSignIn() async {
+      final social = SocialAuth();
+      final api = ProfileApi();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Starting Google sign-in...')),
+        );
+      }
+
+      try {
+        final token = await social.signInWithProvider('google');
+
+        if (token == null || token.isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Google sign-in not completed.')),
+            );
+          }
+          return;
+        }
+
+        // Persist token
+        await social.saveToken(token);
+
+        // Attempt to fetch profile using your ProfileApi
+        UserinformationModel? profile;
+        String rawBody = '';
+        try {
+          // Use ProfileApi.fetchProfile
+          profile = await api.fetchProfile(token);
+
+          // If fetchProfile returns null, try fallback GET /api/profile (explicit)
+          if (profile == null) {
+            final uri = Uri.parse('http://localhost:3000/api/profile');
+            final resp = await http.get(
+              uri,
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Accept': 'application/json',
+              },
+            );
+            rawBody = resp.body;
+            if (resp.statusCode == 200) {
+              final Map<String, dynamic> j =
+                  jsonDecode(resp.body) as Map<String, dynamic>;
+              profile = UserinformationModel.fromMap(j);
+            } else {
+              debugPrint('Fallback /api/profile returned ${resp.statusCode}');
+              profile = null;
+            }
+          }
+        } catch (e, st) {
+          debugPrint('fetchProfile error: $e\n$st');
+          profile = null;
+        }
+
+        // DEBUG: print raw profile object & model fields
+        debugPrint('=== PROFILE FETCH DEBUG ===');
+        if (rawBody.isNotEmpty) {
+          debugPrint('Raw fallback body: $rawBody');
+        }
+        if (profile == null) {
+          debugPrint('Profile is null after fetch.');
+        } else {
+          debugPrint(
+            'Profile model -> name: "${profile.name}", age: ${profile.age}, bio: "${profile.bio}", profilePicture: "${profile.profilePicture}", profilePictureUrl: "${profile.profilePictureUrl}"',
+          );
+        }
+
+        // Accept either profilePictureUrl or profilePicture field
+        final picture =
+            (profile?.profilePictureUrl ?? profile?.profilePicture ?? '')
+                .toString()
+                .trim();
+
+        // Strict completeness: all required
+        final hasName =
+            profile?.name != null && profile!.name.trim().isNotEmpty;
+        final hasAge = profile?.age != null && profile!.age > 0;
+        final hasBio = profile?.bio != null && profile!.bio.trim().isNotEmpty;
+        final hasPicture = picture.isNotEmpty;
+
+        debugPrint(
+          'Checks -> hasName:$hasName, hasAge:$hasAge, hasBio:$hasBio, hasPicture:$hasPicture',
+        );
+
+        final bool isComplete = hasName && hasAge && hasBio && hasPicture;
+
+      
+        if (!context.mounted) return;
+        if (isComplete) {
+          if (context.mounted) {
+            context.go('/homepage');
+          }
+        } else {
+          if (context.mounted) {
+            context.go('/setup');
+          }
+        }
+      } on SocketException {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Network error — please check your connection.'),
+            ),
+          );
+        }
+      } catch (e, st) {
+        debugPrint('_handleGoogleSignIn error: $e\n$st');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Sign-in failed: ${e.toString()}')),
+          );
+          context.go(
+            '/setup',
+          ); // fallback to setup so user can finish onboarding
+        }
+      }
+    }
+
 
     return Scaffold(
       backgroundColor: kBackgroundColor,
@@ -286,50 +411,14 @@ class LoginScreenTablet extends HookConsumerWidget {
                 _SocialIconButtonTablet(
                   image: 'assets/image/googleicon.png',
                   label: 'Google',
-                  onTap: () async {
-                    final social = SocialAuth();
-                    try {
-                      final token = await social.signInWithProvider('google');
-
-                      if (token != null) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Signed in with Google')),
-                          );
-                          context.go('/setup');
-                        }
-                      } else {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Opening Google sign-in...'),
-                            ),
-                          );
-                        }
-                      }
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Sign-in error: $e')),
-                        );
-                      }
-                    }
-                  },
+                  onTap: handleGoogleSignIn,
                   bgColor: Colors.white,
                   textColor: charcoal,
                   borderColor: kBodyTextColor.withValues(alpha: 0.15),
                   buttonWidth: socialButtonWidth,
                 ),
                 SizedBox(width: _clampScale(12 * scale, 8, 16)),
-                _SocialIconButtonTablet(
-                  image: 'assets/image/facebookicon.png',
-                  label: 'Facebook',
-                  onTap: () {},
-                  bgColor: Colors.white,
-                  textColor: charcoal,
-                  borderColor: kBodyTextColor.withValues(alpha: 0.15),
-                  buttonWidth: socialButtonWidth,
-                ),
+                
               ],
             ),
           ),

@@ -1,30 +1,69 @@
-// main.dart
+
+import 'package:dating_app/Presentation/View/Desktop/match_page_desktop.dart';
+import 'package:dating_app/Presentation/View/Desktop/message_page.dart';
+import 'package:dating_app/Presentation/View/Desktop/visit_profile.dart';
+import 'package:dating_app/Presentation/View/Mobile/match_page_mobile.dart';
+import 'package:dating_app/core/theme/colors.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hooks_riverpod/legacy.dart';
+import 'package:dating_app/Data/API/discovery_api.dart';
 
-//// Color Palette
-const Color kTitleColor = Color(0xFF2D2D2D);
-const Color kBodyTextColor = Color(0xFF4F4F4F);
-const Color kPrimaryColor = Color(0xFFE91E63);
-const Color kSecondaryColor = Color(0xFFCFA7F6);
-const Color kAccentColor = Color(0xFFFFDCA8);
-const Color kBackgroundColor = Color(0xFFFAF6F9);
-const Color subtextViolet = Color(0xFF4B3B9A);
-const Color headingViolet = Color(0xFF3D2C8D);
-
-void main() {
-  runApp(const ProviderScope(child: KismetApp()));
-}
 
 // -------------------- Providers --------------------
 final selectedIndexProvider = StateProvider<int>((ref) => 0);
 final currentProfileIndexProvider = StateProvider<int>((ref) => 0);
+final seenProfilesProvider = StateProvider<Set<String>>((ref) => <String>{});
+final selectedPartnerIdProvider = StateProvider<String>((ref) => '');
 
-final profilesProvider = Provider<List<ProfileCard>>(
-  (ref) => [
+// filters (kept in case you want to wire them to fetch)
+final minAgeProvider = StateProvider<int>((ref) => 18);
+final maxAgeProvider = StateProvider<int>((ref) => 50);
+final maxDistanceProvider = StateProvider<int>((ref) => 50);
+final filtersAppliedToggleProvider = StateProvider<int>((ref) => 0);
+
+// Discovery API provider (used by logic)
+final discoveryApiProvider = Provider<DiscoveryApi>((ref) {
+  return DiscoveryApi(baseUrl: 'http://localhost:3000');
+});
+
+// --- Remote profiles provider (async) ---
+final discoveryProfilesProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+      final api = ref.read(discoveryApiProvider);
+      // example default coords (Manila)
+      const double lat = 14.5995;
+      const double lon = 120.9842;
+
+      final minAge = ref.read(minAgeProvider);
+      final maxAge = ref.read(maxAgeProvider);
+      final maxDistance = ref.read(maxDistanceProvider);
+
+      final List<Map<String, dynamic>> raw = await api.fetchProfiles(
+        lat: lat,
+        lon: lon,
+        page: 0,
+        limit: 100,
+        minAge: minAge,
+        maxAge: maxAge,
+        maxDistanceKm: maxDistance.toDouble(),
+      );
+
+      return raw;
+    });
+
+// --- Synchronous provider used by UI (keeps UI unchanged) ---
+// This provider prefers remote data when available, otherwise falls back
+// to your original static sample list so UI stays synchronous and unchanged.
+final profilesProvider = Provider<List<ProfileCard>>((ref) {
+  final async = ref.watch(discoveryProfilesProvider);
+
+  // default static samples (your original data)
+  final fallback = <ProfileCard>[
     ProfileCard(
+      id: '',
       name: 'Sarah',
       age: 28,
       bio: 'Adventure seeker | Coffee enthusiast | Love hiking & photography',
@@ -34,6 +73,7 @@ final profilesProvider = Provider<List<ProfileCard>>(
       ],
     ),
     ProfileCard(
+      id: '',
       name: 'Emily',
       age: 26,
       bio: 'Artist & dreamer | Plant mom 🌿 | Looking for genuine connections',
@@ -43,6 +83,7 @@ final profilesProvider = Provider<List<ProfileCard>>(
       ],
     ),
     ProfileCard(
+      id: '',
       name: 'Jessica',
       age: 30,
       bio:
@@ -52,12 +93,70 @@ final profilesProvider = Provider<List<ProfileCard>>(
         'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1200',
       ],
     ),
-  ],
-);
+  ];
+
+  return async.maybeWhen(
+    data: (list) {
+      // map remote shape to ProfileCard (keep UI fields stable)
+      return list.map<ProfileCard>((m) {
+        final map = Map<String, dynamic>.from(m);
+
+        // defensive extraction (various possible keys)
+        final id = (map['_id'] ?? map['id'] ?? '').toString();
+        final name =
+            (map['name'] ??
+                    map['fullName'] ??
+                    map['displayName'] ??
+                    map['username'] ??
+                    '')
+                .toString();
+        int age = 0;
+        if (map['age'] is int) {
+          age = map['age'] as int;
+        } else if (map['age'] != null) {
+          age = int.tryParse(map['age'].toString()) ?? 0;
+        }
+        final bio = (map['bio'] ?? map['about'] ?? '').toString();
+        String imageUrl = '';
+        if (map['profilePicture'] is String &&
+            (map['profilePicture'] as String).isNotEmpty) {
+          imageUrl = map['profilePicture'] as String;
+        } else if (map['profilePictureUrl'] is String &&
+            (map['profilePictureUrl'] as String).isNotEmpty) {
+          imageUrl = map['profilePictureUrl'] as String;
+        } else if (map['images'] is List &&
+            (map['images'] as List).isNotEmpty) {
+          imageUrl = (map['images'] as List).first.toString();
+        }
+        if (imageUrl.isEmpty) {
+          imageUrl = 'https://via.placeholder.com/800x1000.png?text=No+Image';
+        }
+
+        String distance = 'Unknown';
+        if (map['distanceKm'] != null) {
+          final d = map['distanceKm'];
+          distance = d is num ? '${d.toString()} km away' : d.toString();
+        } else if (map['distance'] != null) {
+          distance = map['distance'].toString();
+        }
+
+        return ProfileCard(
+          id: id,
+          name: name.isEmpty ? 'No name' : name,
+          age: age,
+          bio: bio.isEmpty ? 'No bio' : bio,
+          distance: distance,
+          images: [imageUrl],
+        );
+      }).toList();
+    },
+    orElse: () => fallback,
+  );
+});
 
 // -------------------- App --------------------
-class KismetApp extends HookConsumerWidget {
-  const KismetApp({super.key});
+class HomepageMobile extends HookConsumerWidget {
+  const HomepageMobile({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -105,13 +204,7 @@ class KismetHomePage extends HookConsumerWidget {
         ? screenWidth.clamp(720.0, 1100.0)
         : screenWidth.clamp(0.0, 420.0); // mobile max width 420
 
-    final navWidth = isDesktop
-        ? (clampedWidth * 0.18).clamp(220.0, 340.0)
-        : isTablet
-        ? (clampedWidth * 0.18).clamp(160.0, 260.0)
-        : 72.0.w; // compact sidebar on mobile, scaled via ScreenUtil
-
-    final contentWidth = clampedWidth - navWidth;
+    final contentWidth = clampedWidth;
     final horizontalPadding = isDesktop
         ? (contentWidth * 0.08).clamp(40.0, 140.0)
         : isTablet
@@ -121,13 +214,63 @@ class KismetHomePage extends HookConsumerWidget {
     void onNavTap(int idx) =>
         ref.read(selectedIndexProvider.notifier).state = idx;
 
+    // compute safe index to avoid RangeError
+    final int safeIndex = (() {
+      if (profiles.isEmpty) return 0;
+      if (currentProfileIndex < 0) return 0;
+      if (currentProfileIndex >= profiles.length) return profiles.length - 1;
+      return currentProfileIndex;
+    })();
+
+    // NEW: swipeCard runs API calls (like/skip) in background while advancing UI
     void swipeCard(bool liked) {
       final notifier = ref.read(currentProfileIndexProvider.notifier);
-      final next = notifier.state < profiles.length - 1
-          ? notifier.state + 1
-          : 0;
+      final profilesList = ref.read(profilesProvider);
+      final idx = notifier.state;
+
+      // compute next index safely
+      final next = profilesList.isEmpty
+          ? 0
+          : (notifier.state < profilesList.length - 1 ? notifier.state + 1 : 0);
       notifier.state = next;
+
+      // mark seen locally immediately (best-effort)
+      if (profilesList.isNotEmpty) {
+        final profile = profilesList[safeIndex];
+        final seenNotifier = ref.read(seenProfilesProvider.notifier);
+        if (profile.id.isNotEmpty) {
+          seenNotifier.state = {...seenNotifier.state, profile.id};
+        }
+
+        // fire-and-forget api call
+        final api = ref.read(discoveryApiProvider);
+        if (liked) {
+          api
+              .like(profile.id)
+              .then((res) {
+                final matched =
+                    res != null &&
+                    (res['matched'] == true || res['matched'] == 'true');
+                if (matched) {
+                  // navigate to Matches tab
+                  ref.read(selectedIndexProvider.notifier).state = 1;
+                }
+              })
+              .catchError((_) {
+                // ignore for now - UI already updated
+              });
+        } else {
+          api.skip(profile.id).catchError((_) {
+            // ignore
+          });
+        }
+      } else {
+        // nothing to do if list empty
+      }
     }
+
+    void swipeCardLikePress() => swipeCard(true);
+    void swipeCardDislikePress() => swipeCard(false);
 
     // Card sizes per breakpoint
     final cardMaxWidth = isDesktop
@@ -141,291 +284,288 @@ class KismetHomePage extends HookConsumerWidget {
         ? 560.0
         : 420.0.h; // mobile scaled
 
+    // Drawer widget (reused)
+    Widget buildAppDrawer() {
+      return Drawer(
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 5.0, vertical: 12.0),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [kPrimaryColor, kSecondaryColor],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.favorite_rounded,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(width: 12.w),
+                    Text(
+                      'Kismet',
+                      style: TextStyle(
+                        fontSize: 20.sp,
+                        fontWeight: FontWeight.bold,
+                        color: headingViolet,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+              _drawerNavItem(
+                icon: Icons.explore_rounded,
+                label: 'Discover',
+                index: 0,
+                selected: selectedIndex,
+                onTap: (i) {
+                  onNavTap(i);
+                  Navigator.of(context).maybePop();
+                },
+              ),
+              _drawerNavItem(
+                icon: Icons.favorite_rounded,
+                label: 'Matches',
+                index: 1,
+                selected: selectedIndex,
+                onTap: (i) {
+                  onNavTap(i);
+                  Navigator.of(context).maybePop();
+                },
+              ),
+              _drawerNavItem(
+                icon: Icons.chat_bubble_rounded,
+                label: 'Messages',
+                index: 2,
+                selected: selectedIndex,
+                onTap: (i) {
+                  onNavTap(i);
+                  Navigator.of(context).maybePop();
+                },
+              ),
+             
+              
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 20,
+                      backgroundImage: const NetworkImage(
+                        'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200',
+                      ),
+                    ),
+                    SizedBox(width: 12.w),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'You',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: kTitleColor,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            context.go('/profile');
+                          },
+                          child: Text(
+                            'View Profile',
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              color: subtextViolet,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
+      // AppBar with menu icon to open drawer
+      appBar: AppBar(
+        elevation: 0,
+        backgroundColor: kBackgroundColor,
+        title: Text(
+          _getPageTitle(selectedIndex),
+          style: TextStyle(
+            color: headingViolet,
+            fontSize: isMobile ? 18.sp : (isTablet ? 22.sp : 28.sp),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        leading: Builder(
+          builder: (ctx) {
+            return IconButton(
+              icon: Icon(
+                Icons.menu_rounded,
+                color: kBodyTextColor,
+                size: isMobile ? 22.sp : 26,
+              ),
+              onPressed: () => Scaffold.of(ctx).openDrawer(),
+            );
+          },
+        ),
+        actions: [
+          if (!isMobile)
+            Padding(
+              padding: EdgeInsets.only(right: 18.0),
+              child: Center(
+                child: CircleAvatar(
+                  radius: 18,
+                  backgroundImage: const NetworkImage(
+                    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200',
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+      drawer: buildAppDrawer(),
       body: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: isDesktop ? 2560.0 : (isTablet ? 1100.0 : 420.0),
           ),
-          child: Row(
-            children: [
-              // ---------- Sidebar ----------
-              Container(
-                width: navWidth,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: kPrimaryColor.withValues(alpha: 0.08),
-                      blurRadius: 20,
-                      offset: const Offset(2, 0),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    SizedBox(height: isMobile ? 16.h : 40),
-                    Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isMobile ? 8.w : 24,
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: isMobile ? 36.w : 42,
-                            height: isMobile ? 36.w : 42,
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                colors: [kPrimaryColor, kSecondaryColor],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Icon(
-                              Icons.favorite_rounded,
-                              color: Colors.white,
-                            ),
+          child: Container(
+            width: contentWidth,
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontalPadding,
+              vertical: isMobile ? 18.h : 24,
+            ),
+            child: selectedIndex == 0
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Title area kept (you may remove duplicate title if prefer)
+                      if (!isDesktop) ...[
+                        Text(
+                          'Find your perfect match',
+                          style: TextStyle(
+                            fontSize: isMobile ? 12.sp : 16.sp,
+                            color: subtextViolet,
                           ),
-                          SizedBox(width: isMobile ? 8.w : 12),
-                          if (!isMobile)
-                            Text(
-                              'Kismet',
-                              style: TextStyle(
-                                fontSize: isTablet ? 22.sp : 28.sp,
-                                fontWeight: FontWeight.bold,
-                                color: headingViolet,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                    SizedBox(height: isMobile ? 10.h : (isTablet ? 28 : 50)),
-                    _navItem(
-                      Icons.explore_rounded,
-                      'Discover',
-                      0,
-                      selectedIndex,
-                      onNavTap,
-                      isMobile: isMobile,
-                    ),
-                    _navItem(
-                      Icons.favorite_rounded,
-                      'Matches',
-                      1,
-                      selectedIndex,
-                      onNavTap,
-                      isMobile: isMobile,
-                    ),
-                    _navItem(
-                      Icons.chat_bubble_rounded,
-                      'Messages',
-                      2,
-                      selectedIndex,
-                      onNavTap,
-                      isMobile: isMobile,
-                    ),
-                    _navItem(
-                      Icons.person_rounded,
-                      'Profile',
-                      3,
-                      selectedIndex,
-                      onNavTap,
-                      isMobile: isMobile,
-                    ),
-                    _navItem(
-                      Icons.settings_rounded,
-                      'Settings',
-                      4,
-                      selectedIndex,
-                      onNavTap,
-                      isMobile: isMobile,
-                    ),
-                    const Spacer(),
-                    Padding(
-                      padding: EdgeInsets.all(isMobile ? 12.w : 24),
-                      child: Row(
-                        children: [
-                          CircleAvatar(
-                            radius: isMobile ? 16.r : 20,
-                            backgroundImage: const NetworkImage(
-                              'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200',
-                            ),
-                          ),
-                          if (!isMobile) ...[
-                            SizedBox(width: 12),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'You',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    color: kTitleColor,
-                                  ),
+                        ),
+                        SizedBox(height: 12.h),
+                      ],
+                      Expanded(
+                        child: Center(
+                          child: AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 520),
+                            switchInCurve: Curves.easeOut,
+                            switchOutCurve: Curves.easeIn,
+                            transitionBuilder: (child, animation) {
+                              final offsetAnimation =
+                                  Tween<Offset>(
+                                    begin: const Offset(0.25, 0),
+                                    end: Offset.zero,
+                                  ).animate(
+                                    CurvedAnimation(
+                                      parent: animation,
+                                      curve: Curves.easeOutCubic,
+                                    ),
+                                  );
+                              return FadeTransition(
+                                opacity: animation,
+                                child: SlideTransition(
+                                  position: offsetAnimation,
+                                  child: child,
                                 ),
-                                Text(
-                                  'View Profile',
-                                  style: TextStyle(
-                                    fontSize: 12.sp,
-                                    color: subtextViolet,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // ---------- Main Content ----------
-              Expanded(
-                child: Container(
-                  width: contentWidth,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: horizontalPadding,
-                    vertical: isMobile ? 18.h : 40,
-                  ),
-                  child: selectedIndex == 0
-                      ? Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Discover',
-                              style: TextStyle(
-                                fontSize: isMobile
-                                    ? 22.sp
-                                    : (isTablet ? 28.sp : 36.sp),
-                                fontWeight: FontWeight.bold,
-                                color: headingViolet,
-                              ),
-                            ),
-                            SizedBox(height: isMobile ? 6.h : 8),
-                            Text(
-                              'Find your perfect match',
-                              style: TextStyle(
-                                fontSize: isMobile ? 12.sp : 16.sp,
-                                color: subtextViolet,
-                              ),
-                            ),
-                            SizedBox(height: isMobile ? 16.h : 40),
-                            Expanded(
-                              child: Center(
-                                child: AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 520),
-                                  switchInCurve: Curves.easeOut,
-                                  switchOutCurve: Curves.easeIn,
-                                  transitionBuilder: (child, animation) {
-                                    final offsetAnimation =
-                                        Tween<Offset>(
-                                          begin: const Offset(0.25, 0),
-                                          end: Offset.zero,
-                                        ).animate(
-                                          CurvedAnimation(
-                                            parent: animation,
-                                            curve: Curves.easeOutCubic,
-                                          ),
-                                        );
-                                    return FadeTransition(
-                                      opacity: animation,
-                                      child: SlideTransition(
-                                        position: offsetAnimation,
-                                        child: child,
-                                      ),
-                                    );
-                                  },
-                                  child: _ProfileCardWrapper(
-                                    key: ValueKey<int>(currentProfileIndex),
-                                    profile: profiles[currentProfileIndex],
-                                    onLike: () => swipeCard(true),
-                                    onDislike: () => swipeCard(false),
+                              );
+                            },
+                            // Use safeIndex for key and profile selection
+                            child: profiles.isEmpty
+                                ? _NoProfilesPlaceholder(
+                                    key: const ValueKey('no_profiles'),
+                                  )
+                                : _ProfileCardWrapper(
+                                    key: ValueKey<int>(safeIndex),
+                                    profile: profiles[safeIndex],
+                                    onLike: () {
+                                      swipeCardLikePress();
+                                    },
+                                    onDislike: () {
+                                      swipeCardDislikePress();
+                                    },
                                     isMobile: isMobile,
                                     maxW: cardMaxWidth,
                                     maxH: cardMaxHeight,
                                   ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        )
-                      : Center(
-                          child: Text(
-                            _getPageTitle(selectedIndex),
-                            style: TextStyle(
-                              fontSize: isMobile
-                                  ? 18.sp
-                                  : (isTablet ? 22.sp : 32.sp),
-                              fontWeight: FontWeight.bold,
-                              color: headingViolet,
-                            ),
                           ),
                         ),
-                ),
-              ),
-            ],
+                      ),
+                    ],
+                  )
+                : _nonDiscoverBody(selectedIndex, ref),
           ),
         ),
       ),
     );
   }
 
-  // nav item helper
-  Widget _navItem(
-    IconData icon,
-    String label,
-    int index,
-    int selected,
-    void Function(int) onTap, {
-    required bool isMobile,
+  Widget _nonDiscoverBody(int selectedIndex, WidgetRef ref) {
+    switch (selectedIndex) {
+      case 1:
+        return MatchPageMobile(
+          onNavigateToMatches: () {
+            ref.read(selectedIndexProvider.notifier).state = 1;
+          },
+        );
+      case 2:
+        return MessagesPageDesktop(
+          onOpenProfile: (String partnerId) {
+            ref.read(selectedPartnerIdProvider.notifier).state = partnerId;
+            ref.read(selectedIndexProvider.notifier).state = 3;
+          },
+          onOpenChat: (String partnerId) {
+            ref.read(selectedPartnerIdProvider.notifier).state = partnerId;
+            ref.read(selectedIndexProvider.notifier).state = 2;
+          },
+        );
+      
+      default:
+        return Center(child: Text('Unknown page'));
+    }
+  }
+
+  Widget _drawerNavItem({
+    required IconData icon,
+    required String label,
+    required int index,
+    required int selected,
+    required void Function(int) onTap,
   }) {
-    final isSelected = index == selected;
-    return GestureDetector(
-      onTap: () => onTap(index),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: EdgeInsets.symmetric(
-          horizontal: isMobile ? 8.w : 16,
-          vertical: isMobile ? 6.h : 8,
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: isMobile ? 8.w : 20,
-          vertical: isMobile ? 10.h : 14,
-        ),
-        decoration: BoxDecoration(
-          color: isSelected
-              ? kPrimaryColor.withValues(alpha: 0.1)
-              : Colors.transparent,
-          borderRadius: BorderRadius.circular(isMobile ? 10 : 14),
-          border: Border.all(
-            color: isSelected
-                ? kPrimaryColor.withValues(alpha: 0.3)
-                : Colors.transparent,
-            width: 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              color: isSelected ? kPrimaryColor : kBodyTextColor,
-              size: isMobile ? 20.sp : 24,
-            ),
-            SizedBox(width: isMobile ? 8.w : 16),
-            if (!isMobile)
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: isMobile ? 12.sp : 16.sp,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? kPrimaryColor : kBodyTextColor,
-                ),
-              ),
-          ],
+    final bool isSelected = index == selected;
+    return ListTile(
+      leading: Icon(icon, color: isSelected ? kPrimaryColor : kBodyTextColor),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: isSelected ? kPrimaryColor : kBodyTextColor,
+          fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
         ),
       ),
+      selected: isSelected,
+      onTap: () => onTap(index),
     );
   }
 
@@ -435,13 +575,34 @@ class KismetHomePage extends HookConsumerWidget {
         return 'Matches';
       case 2:
         return 'Messages';
-      case 3:
-        return 'Profile';
-      case 4:
-        return 'Settings';
       default:
         return 'Discover';
     }
+  }
+}
+
+// simple placeholder when profiles is empty (keeps UI layout)
+class _NoProfilesPlaceholder extends StatelessWidget {
+  const _NoProfilesPlaceholder({super.key});
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 320,
+      height: 420,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: kPrimaryColor.withOpacity(0.04),
+          border: Border.all(color: kPrimaryColor.withOpacity(0.08)),
+        ),
+        child: Center(
+          child: Text(
+            'No profiles available',
+            style: TextStyle(color: kBodyTextColor, fontSize: 16),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -642,7 +803,10 @@ class _ProfileCardWrapper extends StatelessWidget {
 }
 
 // -------------------- Profile model --------------------
+// NOTE: added `id` (optional) so API logic can use it; default to empty string
+// UI code is unchanged (fields used by UI remain the same).
 class ProfileCard {
+  final String id;
   final String name;
   final int age;
   final String bio;
@@ -650,6 +814,7 @@ class ProfileCard {
   final List<String> images;
 
   ProfileCard({
+    this.id = '',
     required this.name,
     required this.age,
     required this.bio,

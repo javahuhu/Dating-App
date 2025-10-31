@@ -1,3 +1,9 @@
+import 'dart:io';
+import 'dart:convert';
+import 'package:dating_app/Data/API/profile_api.dart';
+import 'package:dating_app/Data/API/social_api.dart';
+import 'package:http/http.dart' as http;
+import 'package:dating_app/Data/Models/userinformation_model.dart';
 import 'package:dating_app/Presentation/Animation/animation_carousel.dart';
 import 'package:dating_app/Presentation/View/Desktop/snake_border.dart';
 import 'package:flutter/material.dart';
@@ -9,11 +15,13 @@ import 'package:flutter_animate_on_scroll/flutter_animate_on_scroll.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+
 class MobileMainScreen extends HookConsumerWidget {
   const MobileMainScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+
     return ScreenUtilInit(
       designSize: const Size(375, 812),
       minTextAdapt: true,
@@ -25,7 +33,7 @@ class MobileMainScreen extends HookConsumerWidget {
               children: [
                 _buildHeader(context),
                 SizedBox(height: 32.h),
-                _buildMobileHeroSection(),
+                _buildMobileHeroSection(context),
                 SizedBox(height: 80.h),
                 _showFeatures(context, ref),
                 SizedBox(height: 60.h),
@@ -125,7 +133,7 @@ class MobileMainScreen extends HookConsumerWidget {
     );
   }
 
-  Widget _buildMobileHeroSection() {
+  Widget _buildMobileHeroSection(BuildContext context) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20.w),
       child: Column(
@@ -171,13 +179,13 @@ class MobileMainScreen extends HookConsumerWidget {
             ),
           ),
           SizedBox(height: 40.h),
-          _buildMobileAuthButtons(),
+          _buildMobileAuthButtons(context),
         ],
       ),
     );
   }
 
-  Widget _buildMobileAuthButtons() {
+  Widget _buildMobileAuthButtons(BuildContext context) {
     return FadeInLeft(
       config: BaseAnimationConfig(
         repeat: true,
@@ -185,29 +193,143 @@ class MobileMainScreen extends HookConsumerWidget {
         duration: 2.seconds,
         child: Column(
           children: [
-            _authButton('Continue With Google', Colors.red),
-            SizedBox(height: 16.h),
-            Text(
-              'Or',
-              style: GoogleFonts.poppins(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.bold,
-                color: charcoal,
-              ),
-            ),
-            SizedBox(height: 16.h),
-            _authButton('Continue With Facebook', Colors.blue),
+            _authButton('Continue With Google', Colors.red, context),
+            
+           
           ],
         ),
       ),
     );
   }
 
-  Widget _authButton(String text, Color hoverColor) {
+  Widget _authButton(String text, Color hoverColor, BuildContext context) {
+
+    
+    
+    Future<void> handleGoogleSignIn() async {
+      final social = SocialAuth();
+      final api = ProfileApi();
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Starting Google sign-in...')),
+        );
+      }
+
+      try {
+        final token = await social.signInWithProvider('google');
+
+        if (token == null || token.isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Google sign-in not completed.')),
+            );
+          }
+          return;
+        }
+
+        // Persist token
+        await social.saveToken(token);
+
+        // Attempt to fetch profile using your ProfileApi
+        UserinformationModel? profile;
+        String rawBody = '';
+        try {
+          // Use ProfileApi.fetchProfile
+          profile = await api.fetchProfile(token);
+
+          // If fetchProfile returns null, try fallback GET /api/profile (explicit)
+          if (profile == null) {
+            final uri = Uri.parse('http://localhost:3000/api/profile');
+            final resp = await http.get(
+              uri,
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Accept': 'application/json',
+              },
+            );
+            rawBody = resp.body;
+            if (resp.statusCode == 200) {
+              final Map<String, dynamic> j =
+                  jsonDecode(resp.body) as Map<String, dynamic>;
+              profile = UserinformationModel.fromMap(j);
+            } else {
+              debugPrint('Fallback /api/profile returned ${resp.statusCode}');
+              profile = null;
+            }
+          }
+        } catch (e, st) {
+          debugPrint('fetchProfile error: $e\n$st');
+          profile = null;
+        }
+
+        // DEBUG: print raw profile object & model fields
+        debugPrint('=== PROFILE FETCH DEBUG ===');
+        if (rawBody.isNotEmpty) {
+          debugPrint('Raw fallback body: $rawBody');
+        }
+        if (profile == null) {
+          debugPrint('Profile is null after fetch.');
+        } else {
+          debugPrint(
+            'Profile model -> name: "${profile.name}", age: ${profile.age}, bio: "${profile.bio}", profilePicture: "${profile.profilePicture}", profilePictureUrl: "${profile.profilePictureUrl}"',
+          );
+        }
+
+        // Accept either profilePictureUrl or profilePicture field
+        final picture =
+            (profile?.profilePictureUrl ?? profile?.profilePicture ?? '')
+                .toString()
+                .trim();
+
+        // Strict completeness: all required
+        final hasName =
+            profile?.name != null && profile!.name.trim().isNotEmpty;
+        final hasAge = profile?.age != null && profile!.age > 0;
+        final hasBio = profile?.bio != null && profile!.bio.trim().isNotEmpty;
+        final hasPicture = picture.isNotEmpty;
+
+        debugPrint(
+          'Checks -> hasName:$hasName, hasAge:$hasAge, hasBio:$hasBio, hasPicture:$hasPicture',
+        );
+
+        final bool isComplete = hasName && hasAge && hasBio && hasPicture;
+
+        
+        if (!context.mounted) return;
+        if (isComplete) {
+          if (context.mounted) {
+            context.go('/homepage');
+          }
+        } else {
+          if (context.mounted) {
+            context.go('/setup');
+          }
+        }
+      } on SocketException {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Network error — please check your connection.'),
+            ),
+          );
+        }
+      } catch (e, st) {
+        debugPrint('_handleGoogleSignIn error: $e\n$st');
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Sign-in failed: ${e.toString()}')),
+          );
+          context.go(
+            '/setup',
+          ); // fallback to setup so user can finish onboarding
+        }
+      }
+    }
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton(
-        onPressed: () {},
+        onPressed: handleGoogleSignIn,
         style: ButtonStyle(
           side: WidgetStateProperty.all(
             BorderSide(color: charcoal.withValues(alpha: 0.80), width: 1.5.w),
@@ -571,7 +693,7 @@ class MobileMainScreen extends HookConsumerWidget {
                     duration: 600.milliseconds,
                     child: Container(
                       width: 160.w,
-                      height: 120,
+                      height: 150,
                       padding: EdgeInsets.all(5.w),
                       decoration: BoxDecoration(
                         color: Colors.white,
