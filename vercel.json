@@ -2,8 +2,11 @@
   "version": 2,
   "builds": [
     {
-      "src": "build/web/**",
-      "use": "@vercel/static"
+      "src": "**",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "build/web"
+      }
     }
   ],
   "routes": [
@@ -11,5 +14,8 @@
       "src": "/(.*)",
       "dest": "/build/web/$1"
     }
-  ]
+  ],
+  "buildCommand": "flutter build web",
+  "outputDirectory": "build/web",
+  "installCommand": "flutter pub get"
 }
